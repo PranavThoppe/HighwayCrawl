@@ -11,30 +11,36 @@ import GameplayKit
 
 class GameViewController: UIViewController {
 
+    private let skView = SKView()
     private let laneLeftButton = UIButton(type: .system)
     private let laneRightButton = UIButton(type: .system)
     private let actionButton = UIButton(type: .system)
+    private let laneStack = UIStackView()
+    private var hasPresentedScene = false
+    private weak var gameScene: GameScene?
+
+    override var canBecomeFirstResponder: Bool { true }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        
-        if let view = self.view as! SKView? {
-            // Load the SKScene from 'GameScene.sks'
-            if let scene = SKScene(fileNamed: "GameScene") {
-                // Set the scale mode to scale to fit the window
-                scene.scaleMode = .aspectFill
-                
-                // Present the scene
-                view.presentScene(scene)
-            }
-            
-            view.ignoresSiblingOrder = true
-            
-            view.showsFPS = true
-            view.showsNodeCount = true
-        }
-
+        view.backgroundColor = .black
+        setupGameView()
         setupControlButtons()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        becomeFirstResponder()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        presentGameSceneIfNeeded()
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if handleLaneKeys(presses) { return }
+        super.pressesBegan(presses, with: event)
     }
 
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
@@ -53,6 +59,33 @@ class GameViewController: UIViewController {
         return [.left, .right, .bottom]
     }
 
+    private func setupGameView() {
+        skView.translatesAutoresizingMaskIntoConstraints = false
+        skView.ignoresSiblingOrder = true
+        skView.showsFPS = true
+        skView.showsNodeCount = true
+        view.addSubview(skView)
+
+        NSLayoutConstraint.activate([
+            skView.topAnchor.constraint(equalTo: view.topAnchor),
+            skView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            skView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            skView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+
+    private func presentGameSceneIfNeeded() {
+        guard !hasPresentedScene else { return }
+        let size = skView.bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+
+        hasPresentedScene = true
+        let scene = GameScene(size: size)
+        scene.scaleMode = .resizeFill
+        gameScene = scene
+        skView.presentScene(scene)
+    }
+
     private func setupControlButtons() {
         configure(laneLeftButton, accessibilityLabel: "Left", systemImage: "chevron.left")
         configure(laneRightButton, accessibilityLabel: "Right", systemImage: "chevron.right")
@@ -62,11 +95,11 @@ class GameViewController: UIViewController {
         laneRightButton.addTarget(self, action: #selector(didTapLaneRight), for: .touchUpInside)
         actionButton.addTarget(self, action: #selector(didTapAction), for: .touchUpInside)
 
-        let laneStack = UIStackView(arrangedSubviews: [laneLeftButton, laneRightButton])
         laneStack.axis = .horizontal
         laneStack.spacing = 12
+        laneStack.addArrangedSubview(laneLeftButton)
+        laneStack.addArrangedSubview(laneRightButton)
         laneStack.translatesAutoresizingMaskIntoConstraints = false
-
         actionButton.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(laneStack)
@@ -94,19 +127,42 @@ class GameViewController: UIViewController {
         config.image = UIImage(systemName: systemImage)
         config.baseBackgroundColor = .clear
         config.baseForegroundColor = .white
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 36, weight: .bold)
 
         button.configuration = config
         button.backgroundColor = .clear
+        button.tintColor = .white
         button.accessibilityLabel = accessibilityLabel
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOpacity = 0.9
+        button.layer.shadowRadius = 4
+        button.layer.shadowOffset = .zero
     }
 
     @objc private func didTapLaneLeft() {
-        // Lane-change left will be wired up later.
+        gameScene?.changeLane(by: -1)
     }
 
     @objc private func didTapLaneRight() {
-        // Lane-change right will be wired up later.
+        gameScene?.changeLane(by: 1)
+    }
+
+    private func handleLaneKeys(_ presses: Set<UIPress>) -> Bool {
+        var handled = false
+        for press in presses {
+            guard let key = press.key else { continue }
+            switch key.keyCode {
+            case .keyboardLeftArrow:
+                gameScene?.changeLane(by: -1)
+                handled = true
+            case .keyboardRightArrow:
+                gameScene?.changeLane(by: 1)
+                handled = true
+            default:
+                break
+            }
+        }
+        return handled
     }
 
     @objc private func didTapAction() {
