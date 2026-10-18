@@ -80,8 +80,16 @@ class GameViewController: UIViewController {
         guard size.width > 0, size.height > 0 else { return }
 
         hasPresentedScene = true
+        startNewGame(size: size)
+    }
+
+    private func startNewGame(size: CGSize) {
         let scene = GameScene(size: size)
         scene.scaleMode = .resizeFill
+        scene.onRetry = { [weak self] in
+            guard let self else { return }
+            self.startNewGame(size: self.skView.bounds.size)
+        }
         gameScene = scene
         skView.presentScene(scene)
     }
