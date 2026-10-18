@@ -31,6 +31,31 @@ class GameScene: SKScene {
     private let trafficColor = SKColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1)
     private let parkedColor = SKColor(red: 0.9, green: 0.75, blue: 0.2, alpha: 1)
 
+    // Jump
+    private let jumpAirtime: TimeInterval = 0.65
+    private let jumpBoostSpeed: CGFloat = 200
+    private let jumpCooldown: TimeInterval = 3.0
+    private let jumpPeakScale: CGFloat = 1.5
+    private let playerGroundZ: CGFloat = 4
+    private let playerAirZ: CGFloat = 10
+    /// Extra speed while airborne. Kept separate from `scrollSpeed` so the shoulder
+    /// acceleration/deceleration logic is untouched; added to get the effective speed.
+    private var jumpBoost: CGFloat = 0
+    private var jumpTimeRemaining: TimeInterval = 0
+    /// Counts down from `jumpCooldown`, starting the moment a jump begins.
+    private var jumpCooldownRemaining: TimeInterval = 0
+    private let shadow = SKShapeNode(ellipseOf: CGSize(width: 40, height: 70))
+    private let cooldownBarBackground = SKSpriteNode(color: SKColor(white: 0, alpha: 0.5), size: CGSize(width: 120, height: 14))
+    private let cooldownBarFill = SKSpriteNode(color: .orange, size: CGSize(width: 116, height: 10))
+    private let cooldownReadyColor = SKColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1)
+
+    /// Called whenever the jump becomes ready (true) or goes on cooldown (false).
+    var onJumpReadyChanged: ((Bool) -> Void)?
+
+    var isJumpReady: Bool {
+        !isGameOver && !isPlayerAirborne && jumpCooldownRemaining <= 0
+    }
+
     private var laneWidth: CGFloat { size.width / CGFloat(laneCount + 1) }
     private var shoulderWidth: CGFloat { laneWidth * 0.5 }
 
@@ -46,8 +71,109 @@ class GameScene: SKScene {
         }
 
         player.position = CGPoint(x: xPosition(forLane: currentLane), y: size.height * 0.2)
-        player.zPosition = 10
+        player.zPosition = playerGroundZ
+
+        shadow.fillColor = .black
+        shadow.strokeColor = .clear
+        shadow.alpha = 0.35
+        shadow.zPosition = playerGroundZ - 1
+        shadow.isHidden = true
+        shadow.position = player.position
+        addChild(shadow)
         addChild(player)
+
+        setupCooldownBar(in: view)
+    }
+
+    private func setupCooldownBar(in view: SKView) {
+        let insets = view.safeAreaInsets
+        let origin = CGPoint(
+            x: max(16, insets.left + 16),
+            y: size.height - max(24, insets.top + 24)
+        )
+
+        cooldownBarBackground.anchorPoint = CGPoint(x: 0, y: 0.5)
+        cooldownBarBackground.position = origin
+        cooldownBarBackground.zPosition = 30
+        addChild(cooldownBarBackground)
+
+        cooldownBarFill.anchorPoint = CGPoint(x: 0, y: 0.5)
+        cooldownBarFill.position = CGPoint(x: 2, y: 0)
+        cooldownBarFill.color = cooldownReadyColor
+        cooldownBarFill.zPosition = 1
+        cooldownBarBackground.addChild(cooldownBarFill)
+    }
+
+    // MARK: - Jump
+
+    func jump() {
+        guard isJumpReady else { return }
+        isPlayerAirborne = true
+        jumpTimeRemaining = jumpAirtime
+        jumpCooldownRemaining = jumpCooldown
+        jumpBoost = jumpBoostSpeed
+
+        player.zPosition = playerAirZ
+        shadow.isHidden = false
+        cooldownBarFill.removeAction(forKey: "ready")
+        cooldownBarFill.alpha = 1
+        cooldownBarFill.color = .orange
+        cooldownBarFill.xScale = 0
+        onJumpReadyChanged?(false)
+    }
+
+    private func updateJump(dt: TimeInterval) {
+        if isPlayerAirborne {
+            jumpTimeRemaining -= dt
+            if jumpTimeRemaining <= 0 {
+                landPlayer()
+            } else {
+                // Grow then shrink over the airtime
+                let progress = CGFloat(1 - jumpTimeRemaining / jumpAirtime)
+                let height = sin(progress * .pi)
+                player.setScale(1 + (jumpPeakScale - 1) * height)
+                shadow.setScale(1 - 0.25 * height)
+                shadow.alpha = 0.35 - 0.15 * height
+            }
+        }
+
+        if jumpCooldownRemaining > 0 {
+            jumpCooldownRemaining -= dt
+            if jumpCooldownRemaining <= 0 {
+                jumpCooldownRemaining = 0
+                cooldownBarFill.xScale = 1
+                cooldownBarFill.color = cooldownReadyColor
+                flashCooldownBar()
+                // Still airborne (cooldown shorter than airtime) means not ready yet
+                if !isPlayerAirborne { onJumpReadyChanged?(true) }
+            } else {
+                cooldownBarFill.xScale = CGFloat(1 - jumpCooldownRemaining / jumpCooldown)
+            }
+        }
+    }
+
+    private func landPlayer() {
+        isPlayerAirborne = false
+        jumpTimeRemaining = 0
+        jumpBoost = 0
+        player.setScale(1)
+        player.zPosition = playerGroundZ
+        shadow.isHidden = true
+        shadow.setScale(1)
+        shadow.alpha = 0.35
+    }
+
+    private func flashCooldownBar() {
+        let flash = SKAction.sequence([
+            SKAction.fadeAlpha(to: 0.2, duration: 0.08),
+            SKAction.fadeAlpha(to: 1, duration: 0.08)
+        ])
+        cooldownBarFill.run(SKAction.repeat(flash, count: 3), withKey: "ready")
+    }
+
+    override func didEvaluateActions() {
+        // Keep the shadow under the player while the lane-change action moves it
+        shadow.position = player.position
     }
 
     func changeLane(by delta: Int) {
@@ -70,6 +196,9 @@ class GameScene: SKScene {
                 handled = true
             case .keyboardRightArrow:
                 changeLane(by: 1)
+                handled = true
+            case .keyboardSpacebar, .keyboardUpArrow:
+                jump()
                 handled = true
             default:
                 break
@@ -158,15 +287,18 @@ class GameScene: SKScene {
             scrollSpeed = min(normalSpeed, scrollSpeed + acceleration * CGFloat(dt))
         }
 
+        updateJump(dt: dt)
+        let effectiveSpeed = scrollSpeed + jumpBoost
+
         for road in roads {
-            road.position.y -= scrollSpeed * CGFloat(dt)
+            road.position.y -= effectiveSpeed * CGFloat(dt)
             if road.position.y <= -size.height {
                 road.position.y += size.height * 2
             }
         }
 
         spawnPlaceholderTraffic()
-        updateNPCs(dt: dt)
+        updateNPCs(dt: dt, playerSpeed: effectiveSpeed)
         checkCollisions()
     }
 
@@ -193,13 +325,13 @@ class GameScene: SKScene {
         npcs.append(car)
     }
 
-    private func updateNPCs(dt: TimeInterval) {
+    private func updateNPCs(dt: TimeInterval, playerSpeed: CGFloat) {
         let removeBelow = -size.height / 2
         let removeAbove = size.height * 4
         matchSpeedsWithCarsAhead()
         for car in npcs {
             // Parked cars have speed 0, so they move at the full scroll speed
-            car.position.y -= (scrollSpeed - car.forwardSpeed) * CGFloat(dt)
+            car.position.y -= (playerSpeed - car.forwardSpeed) * CGFloat(dt)
         }
         npcs.removeAll { car in
             let offscreen = car.position.y < removeBelow || car.position.y > removeAbove
@@ -248,6 +380,9 @@ class GameScene: SKScene {
     private func endGame() {
         isGameOver = true
         scrollSpeed = 0
+        jumpBoost = 0
+        cooldownBarFill.removeAction(forKey: "ready")
+        onJumpReadyChanged?(false)
 
         let label = SKLabelNode(text: "GAME OVER")
         label.fontName = "AvenirNext-Bold"

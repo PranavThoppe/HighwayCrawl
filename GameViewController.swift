@@ -90,6 +90,10 @@ class GameViewController: UIViewController {
             guard let self else { return }
             self.startNewGame(size: self.skView.bounds.size)
         }
+        scene.onJumpReadyChanged = { [weak self] ready in
+            self?.setJumpReady(ready)
+        }
+        setJumpReady(true)
         gameScene = scene
         skView.presentScene(scene)
     }
@@ -166,6 +170,9 @@ class GameViewController: UIViewController {
             case .keyboardRightArrow:
                 gameScene?.changeLane(by: 1)
                 handled = true
+            case .keyboardSpacebar, .keyboardUpArrow:
+                gameScene?.jump()
+                handled = true
             default:
                 break
             }
@@ -174,6 +181,11 @@ class GameViewController: UIViewController {
     }
 
     @objc private func didTapAction() {
-        // Action button will be wired up later.
+        gameScene?.jump()
+    }
+
+    /// Dims the action button while the jump is on cooldown.
+    private func setJumpReady(_ ready: Bool) {
+        actionButton.alpha = ready ? 1 : 0.35
     }
 }
