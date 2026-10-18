@@ -28,6 +28,8 @@ class GameScene: SKScene {
     private var spawner: TrafficSpawner!
     private let trafficColor = SKColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1)
     private let parkedColor = SKColor(red: 0.9, green: 0.75, blue: 0.2, alpha: 1)
+    /// Wall cars (jump required) look different from regular and parked traffic.
+    private let wallColor = SKColor(red: 0.85, green: 0.15, blue: 0.2, alpha: 1)
 
     // Jump
     private let jumpAirtime: TimeInterval = 0.65
@@ -88,6 +90,8 @@ class GameScene: SKScene {
             playerHeight: player.size.height,
             startLane: currentLane
         )
+        spawner.jumpCooldown = jumpCooldown
+        spawner.isJumpReady = { [weak self] in self?.isJumpReady ?? false }
 
         setupCooldownBar(in: view)
     }
@@ -318,7 +322,7 @@ class GameScene: SKScene {
                 lane: request.lane,
                 speed: request.speed,
                 isParked: request.isParked,
-                color: request.isParked ? parkedColor : trafficColor
+                color: request.isWall ? wallColor : (request.isParked ? parkedColor : trafficColor)
             )
             car.position = CGPoint(x: xPosition(forLane: car.lane), y: size.height + car.size.height / 2)
             car.zPosition = 5

@@ -9,6 +9,8 @@ struct SpawnRequest {
     let isParked: Bool
     /// Game time (seconds since the run started) at which the car appears above the screen.
     let spawnAt: TimeInterval
+    /// True for the cars of a jump-required wall, so the scene can give them a distinct look.
+    var isWall: Bool = false
 }
 
 /// Decides when and where NPC cars spawn. Pure logic: it creates no nodes and never looks at
@@ -54,11 +56,38 @@ final class TrafficSpawner {
     /// Chance that the safe lane steps onto a shoulder when the budget allows it.
     var shoulderSlotChance = 0.2
 
+    // Parked cars (shoulders only)
+
+    /// Chance per spawn tick of trying a parked car on a shoulder, at difficulty 0 and 1.
+    var easyParkedChance = 0.25
+    var hardParkedChance = 0.5
+
+    // Walls
+
+    /// The jump cooldown the player has. A wall is never closer than `wallMinGap` to the previous one.
+    var jumpCooldown: TimeInterval = 3.0
+    /// Extra spacing between walls on top of the cooldown, so the jump is surely ready again.
+    var wallSpacingMargin: TimeInterval = 1.5
+    /// Earliest arrival of the first wall in a run.
+    var firstWallArrival: TimeInterval = 12
+    /// Extra seconds between walls at difficulty 0 and 1 (walls are rare early, frequent later).
+    var easyWallExtraGap: TimeInterval = 20
+    var hardWallExtraGap: TimeInterval = 0
+    /// Chance that one shoulder holds a parked car in a wall. The other shoulder is always empty.
+    var wallShoulderCarChance = 0.75
+    /// Regular traffic pauses this long before a wall can be scheduled, so lanes are clear for it.
+    var wallPrepTime: TimeInterval = 2.0
+    /// Whether the player's jump is ready right now. Set by the scene; a wall is only scheduled
+    /// while this returns true.
+    var isJumpReady: () -> Bool = { true }
+
     /// Distance a faster car behind keeps before it starts following a slower car ahead
     /// (mirrors the scene's car-following rule).
     var followDistance: CGFloat = 40
 
     var minimumSlotDuration: TimeInterval { reactionTime + laneChangeTime }
+    /// A wall is at least one cooldown plus a margin after the previous wall.
+    var wallMinGap: TimeInterval { jumpCooldown + wallSpacingMargin }
     private var windowPadding: TimeInterval { reactionTime + laneChangeTime }
 
     // MARK: - Geometry
@@ -77,7 +106,7 @@ final class TrafficSpawner {
 
     private struct Slot {
         let start: TimeInterval
-        let end: TimeInterval
+        var end: TimeInterval
         let lane: Int
         var isShoulder: Bool
     }
@@ -87,6 +116,12 @@ final class TrafficSpawner {
     private var pending: [SpawnRequest] = []
     private var lastSpawnInLane: [Int: (spawnAt: TimeInterval, speed: CGFloat)] = [:]
     private var nextTickTime: TimeInterval = 0
+    /// Blocking windows (padded) of every car scheduled so far, any lane.
+    private var scheduledWindows: [(start: TimeInterval, end: TimeInterval)] = []
+    /// Time ranges (wall plus landing slot) in which no regular car may block the player's line.
+    private var wallZones: [(start: TimeInterval, end: TimeInterval)] = []
+    /// Earliest time at which the next wall may reach the player's line.
+    private var wallEarliestArrival: TimeInterval = 0
 
     /// - Parameters:
     ///   - laneCount: number of asphalt lanes. Lane 0 and `laneCount + 1` are the shoulders.
@@ -118,6 +153,9 @@ final class TrafficSpawner {
         slots.removeAll()
         pending.removeAll()
         lastSpawnInLane.removeAll()
+        scheduledWindows.removeAll()
+        wallZones.removeAll()
+        wallEarliestArrival = firstWallArrival
         lastShoulderSlotStart = -.infinity
         nextTickTime = gracePeriod
         slots.append(Slot(start: 0, end: slotDuration(at: 0), lane: startLane, isShoulder: false))
@@ -150,21 +188,52 @@ final class TrafficSpawner {
     /// appear now.
     func tick(now: TimeInterval) -> [SpawnRequest] {
         pruneSlots(before: now - 1)
+        scheduledWindows.removeAll { $0.end < now - 1 }
+        wallZones.removeAll { $0.end < now - 1 }
 
         if now >= gracePeriod, now >= nextTickTime {
             let d = difficulty(at: now)
             nextTickTime = now + lerp(easySpawnInterval, hardSpawnInterval, d) * Double.random(in: 0.8...1.2)
 
-            let attempts = Int(lerp(Double(easyAttempts), Double(hardAttempts), d).rounded())
-            let range = speedRange(at: now)
-            for _ in 0..<max(1, attempts) {
-                let lane = Int.random(in: 1...laneCount)
-                let speed = CGFloat.random(in: range)
-                if schedule(lane: lane, speed: speed, isParked: false, spawnAt: now) { break }
+            // Walls take priority: while one is due, regular traffic holds back so the lanes
+            // are clear for it.
+            var holdTraffic = false
+            if isJumpReady() {
+                switch scheduleWall(now: now) {
+                case .scheduled:
+                    holdTraffic = true
+                case .blocked:
+                    holdTraffic = true
+                case .notDue:
+                    holdTraffic = isWallApproaching(now: now)
+                }
+            }
+
+            if !holdTraffic {
+                spawnRegularTraffic(now: now, difficulty: d)
             }
         }
 
         return popDueSpawns(now: now)
+    }
+
+    private func spawnRegularTraffic(now: TimeInterval, difficulty d: Double) {
+        let attempts = Int(lerp(Double(easyAttempts), Double(hardAttempts), d).rounded())
+        let range = speedRange(at: now)
+        for _ in 0..<max(1, attempts) {
+            let lane = Int.random(in: 1...laneCount)
+            let speed = CGFloat.random(in: range)
+            if schedule(lane: lane, speed: speed, isParked: false, spawnAt: now) { break }
+        }
+
+        // Parked cars only ever appear on the shoulders. They go through the same corridor check,
+        // so a shoulder that is the safe lane of a slot never holds one during that slot.
+        if Double.random(in: 0..<1) < lerp(easyParkedChance, hardParkedChance, d) {
+            let shoulders = [0, laneCount + 1].shuffled()
+            for lane in shoulders {
+                if schedule(lane: lane, speed: 0, isParked: true, spawnAt: now) { break }
+            }
+        }
     }
 
     /// The lane that is guaranteed to stay free of cars at game time `time`.
@@ -191,7 +260,11 @@ final class TrafficSpawner {
     func enqueue(_ request: SpawnRequest) {
         let index = pending.firstIndex { $0.spawnAt > request.spawnAt } ?? pending.count
         pending.insert(request, at: index)
-        lastSpawnInLane[request.lane] = (request.spawnAt, request.speed)
+        if request.spawnAt >= (lastSpawnInLane[request.lane]?.spawnAt ?? -.infinity) {
+            lastSpawnInLane[request.lane] = (request.spawnAt, request.speed)
+        }
+        let window = blockingWindow(speed: request.speed, spawnAt: request.spawnAt)
+        scheduledWindows.append((window.start, window.end))
     }
 
     // MARK: - Pending queue
@@ -222,6 +295,7 @@ final class TrafficSpawner {
 
     private func isCorridorClear(lane: Int, speed: CGFloat, spawnAt: TimeInterval) -> Bool {
         let window = blockingWindow(speed: speed, spawnAt: spawnAt)
+        if wallZones.contains(where: { $0.start < window.end && $0.end > window.start }) { return false }
         extendSlots(through: window.end)
         for slot in slots where slot.lane == lane && slot.start < window.end && slot.end > window.start {
             return false
@@ -239,6 +313,15 @@ final class TrafficSpawner {
     /// Returns nil if the lane is still too crowded at the spawn point.
     private func resolveSameLaneSpeed(lane: Int, speed: CGFloat, isParked: Bool, spawnAt: TimeInterval) -> CGFloat? {
         guard let last = lastSpawnInLane[lane] else { return speed }
+
+        // The lane's latest request is a future spawn (a wall car). This car appears below it,
+        // so it must not be faster (it would catch the wall car and end up in the wall) and
+        // must leave room at the moment the wall car appears.
+        if spawnAt < last.spawnAt {
+            guard speed <= last.speed else { return nil }
+            let room = relativeSpeed(speed) * CGFloat(last.spawnAt - spawnAt)
+            return room >= carHeight * 1.5 ? speed : nil
+        }
 
         let elapsed = CGFloat(spawnAt - last.spawnAt)
         let relLast = relativeSpeed(last.speed)
@@ -260,6 +343,101 @@ final class TrafficSpawner {
         let catchTime = max(0, (gap - catchGap) / closing)
         let leaveTime = screenTravel / relNew
         return catchTime < leaveTime ? last.speed : speed
+    }
+
+    // MARK: - Walls
+
+    private enum WallResult {
+        case notDue
+        case scheduled
+        case blocked
+    }
+
+    /// Typical time a wall car needs from its spawn point to the player's line.
+    private func typicalWallTravel(at time: TimeInterval) -> TimeInterval {
+        let range = speedRange(at: time)
+        let slowHalfMid = (range.lowerBound + (range.lowerBound + range.upperBound) / 2) / 2
+        return TimeInterval(spawnDistance / relativeSpeed(slowHalfMid))
+    }
+
+    /// True shortly before a wall becomes due, while regular traffic should already hold back.
+    private func isWallApproaching(now: TimeInterval) -> Bool {
+        now + typicalWallTravel(at: now) + wallPrepTime >= wallEarliestArrival
+    }
+
+    /// Tries to schedule a wall: all asphalt lanes blocked by cars of one speed, plus (usually)
+    /// a parked car on one shoulder. The other shoulder stays empty. All cars reach the player's
+    /// line together because each gets its own spawn time. Everything is rejected together if
+    /// any part of it conflicts with traffic already scheduled.
+    private func scheduleWall(now: TimeInterval) -> WallResult {
+        let range = speedRange(at: now)
+        let slowHalf = range.lowerBound...((range.lowerBound + range.upperBound) / 2)
+        let wallSpeed = CGFloat.random(in: slowHalf)
+        let movingTravel = TimeInterval(spawnDistance / relativeSpeed(wallSpeed))
+        let parkedTravel = TimeInterval(spawnDistance / relativeSpeed(0))
+
+        // Not yet: the spacing rule says the wall would reach the line later than its natural lead time.
+        let earliest = now + movingTravel
+        guard wallEarliestArrival <= earliest + 0.25 else { return .notDue }
+        let arrival = max(earliest, wallEarliestArrival)
+
+        var requests: [SpawnRequest] = []
+        for lane in 1...laneCount {
+            requests.append(SpawnRequest(
+                lane: lane, speed: wallSpeed, isParked: false,
+                spawnAt: arrival - movingTravel, isWall: true
+            ))
+        }
+        // At least one shoulder is always left without a car.
+        if Double.random(in: 0..<1) < wallShoulderCarChance {
+            let lane = Bool.random() ? 0 : laneCount + 1
+            requests.append(SpawnRequest(
+                lane: lane, speed: 0, isParked: true,
+                spawnAt: arrival - parkedTravel, isWall: true
+            ))
+        }
+
+        // Every wall car must keep its planned speed (no car ahead for it to catch) and have room.
+        for request in requests {
+            guard let speed = resolveSameLaneSpeed(
+                lane: request.lane, speed: request.speed, isParked: request.isParked, spawnAt: request.spawnAt
+            ), abs(speed - request.speed) < 0.001 else { return .blocked }
+        }
+
+        // The zone runs from the start of the wall's first blocking window to the end of the last,
+        // plus a completely clear slot so the player has somewhere to land.
+        let windows = requests.map { blockingWindow(speed: $0.speed, spawnAt: $0.spawnAt) }
+        let zoneStart = windows.map(\.start).min() ?? arrival
+        let landing = slotDuration(at: arrival)
+        let zoneEnd = (windows.map(\.end).max() ?? arrival) + landing
+
+        // No traffic already scheduled may reach the line inside the zone.
+        if scheduledWindows.contains(where: { $0.start < zoneEnd && $0.end > zoneStart }) { return .blocked }
+        if wallZones.contains(where: { $0.start < zoneEnd && $0.end > zoneStart }) { return .blocked }
+
+        for request in requests { enqueue(request) }
+        wallZones.append((zoneStart, zoneEnd))
+        holdSafeLane(from: zoneStart, to: zoneEnd)
+
+        let d = difficulty(at: now)
+        let extra = lerp(easyWallExtraGap, hardWallExtraGap, d) * Double.random(in: 0.8...1.2)
+        wallEarliestArrival = arrival + wallMinGap + extra
+        return .scheduled
+    }
+
+    /// Replaces the slot timeline over a wall zone with a single slot that keeps the previous
+    /// safe lane, so the timeline picks up from a sensible lane once the wall has passed.
+    private func holdSafeLane(from start: TimeInterval, to end: TimeInterval) {
+        extendSlots(through: start)
+        let baseLane = slots.last(where: { $0.start < start })?.lane ?? startLane
+        slots.removeAll { $0.start >= start }
+        if var last = slots.last, last.end > start {
+            last.end = start
+            slots[slots.count - 1] = last
+        }
+        let lane = min(max(baseLane, 1), laneCount)
+        slots.append(Slot(start: start, end: end, lane: lane, isShoulder: false))
+        lastShoulderSlotStart = slots.filter(\.isShoulder).map(\.start).max() ?? -.infinity
     }
 
     // MARK: - Slot timeline
