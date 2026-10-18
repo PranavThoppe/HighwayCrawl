@@ -24,10 +24,8 @@ class GameScene: SKScene {
     private var npcs: [NPCCar] = []
     private var isPlayerAirborne = false
     private let maxDeltaTime: TimeInterval = 1.0 / 30.0
-    private let npcSpeedRange: ClosedRange<CGFloat> = 250...420
-    private let gracePeriod: TimeInterval = 3.0
     private var elapsedTime: TimeInterval = 0
-    private var nextSpawnTime: TimeInterval = 0
+    private var spawner: TrafficSpawner!
     private let trafficColor = SKColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1)
     private let parkedColor = SKColor(red: 0.9, green: 0.75, blue: 0.2, alpha: 1)
 
@@ -81,6 +79,15 @@ class GameScene: SKScene {
         shadow.position = player.position
         addChild(shadow)
         addChild(player)
+
+        spawner = TrafficSpawner(
+            laneCount: laneCount,
+            sceneHeight: size.height,
+            playerY: player.position.y,
+            playerSpeed: normalSpeed,
+            playerHeight: player.size.height,
+            startLane: currentLane
+        )
 
         setupCooldownBar(in: view)
     }
@@ -297,32 +304,27 @@ class GameScene: SKScene {
             }
         }
 
-        spawnPlaceholderTraffic()
+        spawnTraffic()
         updateNPCs(dt: dt, playerSpeed: effectiveSpeed)
         checkCollisions()
     }
 
     // MARK: - NPC cars
 
-    // Placeholder spawner: random cars, replaced by TrafficSpawner later
-    private func spawnPlaceholderTraffic() {
-        guard elapsedTime >= gracePeriod, elapsedTime >= nextSpawnTime else { return }
-        nextSpawnTime = elapsedTime + TimeInterval.random(in: 0.8...1.6)
-
-        let car: NPCCar
-        if Int.random(in: 0..<5) == 0 {
-            let lane = Bool.random() ? 0 : laneCount + 1
-            guard isSpawnClear(lane: lane) else { return }
-            car = NPCCar(lane: lane, speed: 0, isParked: true, color: parkedColor)
-        } else {
-            let lane = Int.random(in: 1...laneCount)
-            guard isSpawnClear(lane: lane) else { return }
-            car = NPCCar(lane: lane, speed: CGFloat.random(in: npcSpeedRange), color: trafficColor)
+    // TrafficSpawner decides what appears and when; the scene only builds the nodes
+    private func spawnTraffic() {
+        for request in spawner.tick(now: elapsedTime) {
+            let car = NPCCar(
+                lane: request.lane,
+                speed: request.speed,
+                isParked: request.isParked,
+                color: request.isParked ? parkedColor : trafficColor
+            )
+            car.position = CGPoint(x: xPosition(forLane: car.lane), y: size.height + car.size.height / 2)
+            car.zPosition = 5
+            addChild(car)
+            npcs.append(car)
         }
-        car.position = CGPoint(x: xPosition(forLane: car.lane), y: size.height + car.size.height / 2)
-        car.zPosition = 5
-        addChild(car)
-        npcs.append(car)
     }
 
     private func updateNPCs(dt: TimeInterval, playerSpeed: CGFloat) {
@@ -359,13 +361,6 @@ class GameScene: SKScene {
                 }
             }
         }
-    }
-
-    // Don't spawn on top of a car that's still near the spawn point in the same lane
-    private func isSpawnClear(lane: Int) -> Bool {
-        let spawnY = size.height + NPCCar.carSize.height / 2
-        let minGap = NPCCar.carSize.height * 1.5
-        return !npcs.contains { $0.lane == lane && spawnY - $0.position.y < minGap }
     }
 
     private func checkCollisions() {
