@@ -49,6 +49,23 @@ class GameScene: SKScene {
     private let cooldownBarFill = SKSpriteNode(color: .orange, size: CGSize(width: 116, height: 10))
     private let cooldownReadyColor = SKColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1)
 
+    // Roof bounce and score
+    private let bounceAirtime: TimeInterval = 0.35
+    private let bouncePeakScale: CGFloat = 1.25
+    private let roofBonus = 250
+    /// Distance units earned per point travelled.
+    private let pointsPerDistance: CGFloat = 0.1
+    /// Duration and peak scale of the hop currently in progress (jump or bounce).
+    private var currentAirtime: TimeInterval = 0.65
+    private var currentPeakScale: CGFloat = 1.5
+    /// Roofs landed on in the current airborne chain; 0 when on the ground.
+    private var comboCount = 0
+    private var lastBouncedCar: NPCCar?
+    private var distanceScore: CGFloat = 0
+    private var bonusScore = 0
+    private var shownScore = -1
+    private let scoreLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
+
     /// Called whenever the jump becomes ready (true) or goes on cooldown (false).
     var onJumpReadyChanged: ((Bool) -> Void)?
 
@@ -94,6 +111,31 @@ class GameScene: SKScene {
         spawner.isJumpReady = { [weak self] in self?.isJumpReady ?? false }
 
         setupCooldownBar(in: view)
+        setupScoreLabel(in: view)
+    }
+
+    private func setupScoreLabel(in view: SKView) {
+        let insets = view.safeAreaInsets
+        scoreLabel.fontSize = 24
+        scoreLabel.fontColor = .white
+        scoreLabel.horizontalAlignmentMode = .right
+        scoreLabel.verticalAlignmentMode = .center
+        scoreLabel.position = CGPoint(
+            x: size.width - max(16, insets.right + 16),
+            y: size.height - max(24, insets.top + 24)
+        )
+        scoreLabel.zPosition = 30
+        addChild(scoreLabel)
+        refreshScoreLabel()
+    }
+
+    private var totalScore: Int { Int(distanceScore) + bonusScore }
+
+    private func refreshScoreLabel() {
+        let score = totalScore
+        guard score != shownScore else { return }
+        shownScore = score
+        scoreLabel.text = "\(score)"
     }
 
     private func setupCooldownBar(in view: SKView) {
@@ -123,6 +165,10 @@ class GameScene: SKScene {
         jumpTimeRemaining = jumpAirtime
         jumpCooldownRemaining = jumpCooldown
         jumpBoost = jumpBoostSpeed
+        currentAirtime = jumpAirtime
+        currentPeakScale = jumpPeakScale
+        comboCount = 0
+        lastBouncedCar = nil
 
         player.zPosition = playerAirZ
         shadow.isHidden = false
@@ -137,12 +183,16 @@ class GameScene: SKScene {
         if isPlayerAirborne {
             jumpTimeRemaining -= dt
             if jumpTimeRemaining <= 0 {
-                landPlayer()
+                if let roof = carUnderPlayer() {
+                    bounce(off: roof)
+                } else {
+                    landPlayer()
+                }
             } else {
                 // Grow then shrink over the airtime
-                let progress = CGFloat(1 - jumpTimeRemaining / jumpAirtime)
+                let progress = CGFloat(1 - jumpTimeRemaining / currentAirtime)
                 let height = sin(progress * .pi)
-                player.setScale(1 + (jumpPeakScale - 1) * height)
+                player.setScale(1 + (currentPeakScale - 1) * height)
                 shadow.setScale(1 - 0.25 * height)
                 shadow.alpha = 0.35 - 0.15 * height
             }
@@ -163,10 +213,69 @@ class GameScene: SKScene {
         }
     }
 
+    /// The car the player's hitbox overlaps at the moment a hop ends, if any.
+    private func carUnderPlayer() -> NPCCar? {
+        // Use the unscaled footprint so the end of a hop isn't judged at a stretched size
+        let box = CGRect(
+            x: player.position.x - player.size.width / 2,
+            y: player.position.y - player.size.height / 2,
+            width: player.size.width,
+            height: player.size.height
+        ).insetBy(dx: 4, dy: 6)
+        return npcs.first { box.intersects($0.frame) }
+    }
+
+    /// Landed on a roof: start a forward mini-hop and award a combo bonus.
+    /// Doesn't touch the jump cooldown.
+    private func bounce(off car: NPCCar) {
+        // A hop that ends on the same car (slow car, short hop) keeps the combo but pays nothing new
+        if car !== lastBouncedCar {
+            comboCount += 1
+            let bonus = roofBonus * comboCount
+            bonusScore += bonus
+            refreshScoreLabel()
+            showBonusLabel(bonus: bonus, combo: comboCount)
+        }
+        lastBouncedCar = car
+
+        jumpTimeRemaining = bounceAirtime
+        currentAirtime = bounceAirtime
+        currentPeakScale = bouncePeakScale
+        jumpBoost = jumpBoostSpeed
+        player.setScale(1)
+        player.zPosition = playerAirZ
+    }
+
+    private func showBonusLabel(bonus: Int, combo: Int) {
+        let label = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+        label.text = combo > 1 ? "+\(bonus) x\(combo)" : "+\(bonus)"
+        label.fontSize = 28
+        label.fontColor = SKColor(red: 1, green: 0.85, blue: 0.2, alpha: 1)
+        label.verticalAlignmentMode = .center
+        label.horizontalAlignmentMode = .center
+        label.position = CGPoint(x: player.position.x, y: player.position.y + player.size.height)
+        label.zPosition = 25
+        addChild(label)
+        label.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.moveBy(x: 0, y: 80, duration: 0.8),
+                SKAction.sequence([
+                    SKAction.wait(forDuration: 0.4),
+                    SKAction.fadeOut(withDuration: 0.4)
+                ])
+            ]),
+            SKAction.removeFromParent()
+        ]))
+    }
+
     private func landPlayer() {
         isPlayerAirborne = false
         jumpTimeRemaining = 0
         jumpBoost = 0
+        comboCount = 0
+        lastBouncedCar = nil
+        // The cooldown may have run out mid-air (e.g. a long bounce chain)
+        if jumpCooldownRemaining <= 0 && !isGameOver { onJumpReadyChanged?(true) }
         player.setScale(1)
         player.zPosition = playerGroundZ
         shadow.isHidden = true
@@ -300,6 +409,8 @@ class GameScene: SKScene {
 
         updateJump(dt: dt)
         let effectiveSpeed = scrollSpeed + jumpBoost
+        distanceScore += effectiveSpeed * CGFloat(dt) * pointsPerDistance
+        refreshScoreLabel()
 
         for road in roads {
             road.position.y -= effectiveSpeed * CGFloat(dt)
