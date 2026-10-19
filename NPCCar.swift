@@ -39,6 +39,13 @@ final class NPCCar: SKSpriteNode {
         return textures
     }()
 
+    /// Kept out of `textures` so the ambulance's height does not change traffic timing.
+    private static let ambulanceTexture: SKTexture = {
+        let texture = SKTexture(imageNamed: "ambulance.white")
+        texture.filteringMode = .nearest
+        return texture
+    }()
+
     /// On-screen size of a texture; the frame is also the hitbox, so art must be cropped tight.
     private static func size(of texture: SKTexture) -> CGSize {
         let pixels = texture.size()
@@ -62,19 +69,24 @@ final class NPCCar: SKSpriteNode {
     /// Mutable so a car can slow down to match the car ahead of it.
     var forwardSpeed: CGFloat
     let isParked: Bool
+    let isAmbulance: Bool
 
     /// - Parameters:
     ///   - isWall: wall cars are drawn as box trucks; everything else uses regular traffic art.
+    ///   - isAmbulance: uses the ambulance sprite and is excluded from same-lane following.
     ///   - tint: optional colour mixed over the car art, used to tell car kinds apart.
     ///   - tintAmount: 0 shows the plain art, 1 paints the car solid `tint`.
     init(
         lane: Int, speed: CGFloat, isParked: Bool = false, isWall: Bool = false,
-        tint: SKColor? = nil, tintAmount: CGFloat = 0.5
+        isAmbulance: Bool = false, tint: SKColor? = nil, tintAmount: CGFloat = 0.5
     ) {
         self.lane = lane
         self.forwardSpeed = isParked ? 0 : speed
         self.isParked = isParked
-        let texture = NPCCar.randomTexture(from: isWall ? NPCCar.wallModels : NPCCar.trafficModels)
+        self.isAmbulance = isAmbulance
+        let texture = isAmbulance
+            ? NPCCar.ambulanceTexture
+            : NPCCar.randomTexture(from: isWall ? NPCCar.wallModels : NPCCar.trafficModels)
         super.init(texture: texture, color: tint ?? .white, size: NPCCar.size(of: texture))
         colorBlendFactor = tint == nil ? 0 : tintAmount
     }

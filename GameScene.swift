@@ -58,6 +58,7 @@ class GameScene: SKScene {
     private let bounceAirtime: TimeInterval = 0.35
     private let bouncePeakScale: CGFloat = 1.25
     private let roofBonus = 250
+    private let ambulanceBonus = 1000
     /// Distance units earned per point travelled.
     private let pointsPerDistance: CGFloat = 0.1
     /// Duration and peak scale of the hop currently in progress (jump or bounce).
@@ -70,6 +71,17 @@ class GameScene: SKScene {
     private var bonusScore = 0
     private var shownScore = -1
     private let scoreLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
+
+    // Ambulance: after the unlock score, every interval has a chance to send one
+    // from behind in the player's lane. The only warning is a red lane flash.
+    private let ambulanceUnlockScore = 5000
+    private let ambulanceScoreInterval = 1000
+    private let ambulanceChance = 0.30
+    private let ambulanceWarningTime: TimeInterval = 0.85
+    private var nextAmbulanceCheckScore = 0
+    private var ambulanceWarningRemaining: TimeInterval = 0
+    private var ambulanceLane = 0
+    private var laneFlash: SKSpriteNode?
 
     /// Called whenever the jump becomes ready (true) or goes on cooldown (false).
     var onJumpReadyChanged: ((Bool) -> Void)?
@@ -117,6 +129,7 @@ class GameScene: SKScene {
 
         setupCooldownBar(in: view)
         setupScoreLabel(in: view)
+        nextAmbulanceCheckScore = ambulanceUnlockScore
     }
 
     private func setupScoreLabel(in view: SKView) {
@@ -236,10 +249,10 @@ class GameScene: SKScene {
         // A hop that ends on the same car (slow car, short hop) keeps the combo but pays nothing new
         if car !== lastBouncedCar {
             comboCount += 1
-            let bonus = roofBonus * comboCount
+            let bonus = car.isAmbulance ? ambulanceBonus : roofBonus * comboCount
             bonusScore += bonus
             refreshScoreLabel()
-            showBonusLabel(bonus: bonus, combo: comboCount)
+            showBonusLabel(bonus: bonus, combo: car.isAmbulance ? 1 : comboCount)
         }
         lastBouncedCar = car
 
@@ -425,6 +438,7 @@ class GameScene: SKScene {
         }
 
         spawnTraffic()
+        updateAmbulance(dt: dt)
         updateNPCs(dt: dt, playerSpeed: effectiveSpeed)
         checkCollisions()
     }
@@ -448,10 +462,81 @@ class GameScene: SKScene {
         }
     }
 
+    // MARK: - Ambulance
+
+    private var hasActiveAmbulance: Bool {
+        ambulanceWarningRemaining > 0 || npcs.contains { $0.isAmbulance }
+    }
+
+    /// Locks the player's lane at warning time. A shoulder becomes the nearest asphalt lane.
+    private func lockedAmbulanceLane() -> Int {
+        if currentLane == 0 { return 1 }
+        if currentLane == laneCount + 1 { return laneCount }
+        return currentLane
+    }
+
+    private func updateAmbulance(dt: TimeInterval) {
+        while totalScore >= nextAmbulanceCheckScore {
+            if !hasActiveAmbulance, Double.random(in: 0..<1) < ambulanceChance {
+                startAmbulanceWarning()
+            }
+            nextAmbulanceCheckScore += ambulanceScoreInterval
+        }
+
+        guard ambulanceWarningRemaining > 0 else { return }
+        ambulanceWarningRemaining -= dt
+        if ambulanceWarningRemaining <= 0 {
+            ambulanceWarningRemaining = 0
+            spawnAmbulance()
+        }
+    }
+
+    private func startAmbulanceWarning() {
+        ambulanceLane = lockedAmbulanceLane()
+        ambulanceWarningRemaining = ambulanceWarningTime
+        clearLaneFlash()
+
+        let flash = SKSpriteNode(
+            color: SKColor(red: 1, green: 0.12, blue: 0.1, alpha: 0.5),
+            size: CGSize(width: laneWidth, height: size.height)
+        )
+        flash.position = CGPoint(x: xPosition(forLane: ambulanceLane), y: size.height / 2)
+        flash.zPosition = 2
+        flash.alpha = 0.5
+        addChild(flash)
+        laneFlash = flash
+
+        let pulse = SKAction.repeatForever(SKAction.sequence([
+            SKAction.fadeAlpha(to: 0.18, duration: 0.1),
+            SKAction.fadeAlpha(to: 0.55, duration: 0.1)
+        ]))
+        flash.run(pulse, withKey: "pulse")
+    }
+
+    private func spawnAmbulance() {
+        clearLaneFlash()
+        let car = NPCCar(
+            lane: ambulanceLane,
+            speed: normalSpeed * 2,
+            isAmbulance: true
+        )
+        car.position = CGPoint(x: xPosition(forLane: ambulanceLane), y: -car.size.height / 2)
+        car.zPosition = 6
+        addChild(car)
+        npcs.append(car)
+    }
+
+    private func clearLaneFlash() {
+        laneFlash?.removeAllActions()
+        laneFlash?.removeFromParent()
+        laneFlash = nil
+    }
+
     private func updateNPCs(dt: TimeInterval, playerSpeed: CGFloat) {
         let removeBelow = -size.height / 2
         let removeAbove = size.height * 4
         matchSpeedsWithCarsAhead()
+        clearLaneForAmbulance()
         for car in npcs {
             // Parked cars have speed 0, so they move at the full scroll speed
             car.position.y -= (playerSpeed - car.forwardSpeed) * CGFloat(dt)
@@ -463,11 +548,31 @@ class GameScene: SKScene {
         }
     }
 
+    /// Cars in the ambulance's lane match its speed so it does not rear-end them.
+    /// Also runs during the warning so the lane is already moving when it appears.
+    private func clearLaneForAmbulance() {
+        let lane: Int
+        if let ambulance = npcs.first(where: { $0.isAmbulance }) {
+            lane = ambulance.lane
+        } else if ambulanceWarningRemaining > 0 {
+            lane = ambulanceLane
+        } else {
+            return
+        }
+
+        let speed = normalSpeed * 2
+        for car in npcs where car.lane == lane && !car.isAmbulance && !car.isParked {
+            if car.forwardSpeed < speed {
+                car.forwardSpeed = speed
+            }
+        }
+    }
+
     // NPCs drive up the screen, so the car "ahead" has the larger y.
     // A faster car that closes within `followDistance` of the car ahead slows to its speed.
     private func matchSpeedsWithCarsAhead() {
         let followDistance: CGFloat = 40
-        let moving = npcs.filter { !$0.isParked }
+        let moving = npcs.filter { !$0.isParked && !$0.isAmbulance }
         for lane in 1...laneCount {
             let inLane = moving.filter { $0.lane == lane }.sorted { $0.position.y < $1.position.y }
             guard inLane.count > 1 else { continue }
@@ -497,6 +602,8 @@ class GameScene: SKScene {
         scrollSpeed = 0
         jumpBoost = 0
         cooldownBarFill.removeAction(forKey: "ready")
+        ambulanceWarningRemaining = 0
+        clearLaneFlash()
         onJumpReadyChanged?(false)
 
         let label = SKLabelNode(text: "GAME OVER")
