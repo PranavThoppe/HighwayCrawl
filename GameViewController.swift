@@ -90,12 +90,21 @@ class GameViewController: UIViewController {
             guard let self else { return }
             self.startNewGame(size: self.skView.bounds.size)
         }
+        scene.onGameOver = { [weak self] in
+            self?.setControlsHidden(true)
+        }
         scene.onJumpReadyChanged = { [weak self] ready in
             self?.setJumpReady(ready)
         }
+        setControlsHidden(false)
         setJumpReady(true)
         gameScene = scene
         skView.presentScene(scene)
+    }
+
+    private func setControlsHidden(_ hidden: Bool) {
+        laneStack.isHidden = hidden
+        actionButton.isHidden = hidden
     }
 
     private func setupControlButtons() {

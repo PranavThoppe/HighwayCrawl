@@ -1,4 +1,5 @@
 import SpriteKit
+import UIKit
 
 class GameScene: SKScene {
     private static let driveTexture: SKTexture = {
@@ -39,6 +40,8 @@ class GameScene: SKScene {
 
     /// Called when the player taps the retry button after a game over.
     var onRetry: (() -> Void)?
+    /// Called when gameplay stops (crash or shoulder) so the host can hide its controls.
+    var onGameOver: (() -> Void)?
     private let retryButtonName = "retryButton"
 
     // NPC traffic
@@ -428,6 +431,10 @@ class GameScene: SKScene {
         let rawDt = lastTime == 0 ? 0 : currentTime - lastTime
         let dt = min(rawDt, maxDeltaTime)
         lastTime = currentTime
+        if isCrashing {
+            stepCrash(dt: dt)
+            return
+        }
         guard !isGameOver, dt > 0 else { return }
         elapsedTime += dt
 
@@ -607,13 +614,163 @@ class GameScene: SKScene {
     private func checkCollisions() {
         guard !isPlayerAirborne else { return }
         let hitbox = player.frame.insetBy(dx: 4, dy: 6)
-        for car in npcs where hitbox.intersects(car.frame) {
-            endGame()
-            return
+        let hits = npcs.filter { hitbox.intersects($0.frame) }
+        if !hits.isEmpty {
+            beginCrash(with: hits, hitbox: hitbox)
         }
     }
 
-    private func endGame() {
+    /// Unit push direction away from `car`, along the axis the two overlap least (the side that was hit).
+    private func hitDirection(from car: NPCCar, hitbox: CGRect) -> CGVector {
+        let overlap = hitbox.intersection(car.frame)
+        let dx = player.position.x - car.position.x
+        let dy = player.position.y - car.position.y
+        if overlap.width < overlap.height {
+            return CGVector(dx: dx >= 0 ? 1 : -1, dy: 0)
+        }
+        return CGVector(dx: 0, dy: dy >= 0 ? 1 : -1)
+    }
+
+    /// Short knockback: the hit cars get shoved away (further than the roadster), then the game ends.
+    private func beginCrash(with cars: [NPCCar], hitbox: CGRect) {
+        stopGameplay()
+        player.removeAction(forKey: "laneChange")
+        endRoll()
+        player.setScale(1)
+        player.zPosition = playerAirZ
+
+        // Slide distance = speed / crashDrag, so these give ~130 pt for cars and ~70 pt for the roadster
+        let carSpeed = 130 * crashDrag
+        let playerSpeed = 70 * crashDrag
+        var push = CGVector.zero
+
+        crashBodies = [CrashBody(node: player)]
+        crashElapsed = 0
+        crashFadeStarted = false
+        crashPairs = []
+        for car in cars {
+            let dir = hitDirection(from: car, hitbox: hitbox)
+            push.dx += dir.dx
+            push.dy += dir.dy
+            let body = CrashBody(node: car)
+            body.velocity = CGVector(dx: -dir.dx * carSpeed, dy: -dir.dy * carSpeed)
+            body.spin = (dir.dx != 0 ? -dir.dx : dir.dy) * .pi * crashDrag
+            crashBodies.append(body)
+            // Already handled by the initial hit
+            crashPairs.insert([ObjectIdentifier(player), ObjectIdentifier(car)].sorted { $0.hashValue < $1.hashValue })
+        }
+
+        // Opposing pushes (a car on each side) cancel, leaving the roadster to sit between them
+        let length = max(hypot(push.dx, push.dy), 1)
+        let playerBody = crashBodies[0]
+        playerBody.velocity = CGVector(dx: push.dx / length * playerSpeed, dy: push.dy / length * playerSpeed)
+        playerBody.spin = (push.dx != 0 ? push.dx : -push.dy) / length * 2 * .pi * crashDrag
+        isCrashing = true
+    }
+
+    /// A node moving during the crash animation.
+    private final class CrashBody {
+        let node: SKNode
+        var velocity = CGVector.zero
+        var spin: CGFloat = 0
+        init(node: SKNode) { self.node = node }
+        var speed: CGFloat { hypot(velocity.dx, velocity.dy) }
+    }
+
+    private var isCrashing = false
+    private var crashBodies: [CrashBody] = []
+    private var crashPairs: Set<[ObjectIdentifier]> = []
+    private var crashElapsed: TimeInterval = 0
+    private var crashFadeStarted = false
+    /// Exponential slowdown rate (1/s) of the crash slide and spin.
+    private let crashDrag: CGFloat = 6
+    /// Hold on the crash before the screen fades to black.
+    private let crashFadeDelay: TimeInterval = 1.0
+    private let crashFadeDuration: TimeInterval = 0.4
+
+    private func stepCrash(dt: TimeInterval) {
+        let dt = CGFloat(dt)
+        crashElapsed += TimeInterval(dt)
+        let damping = exp(-crashDrag * dt)
+
+        for body in crashBodies {
+            body.node.position.x += body.velocity.dx * dt
+            body.node.position.y += body.velocity.dy * dt
+            body.node.zRotation += body.spin * dt
+            body.velocity.dx *= damping
+            body.velocity.dy *= damping
+            body.spin *= damping
+        }
+        resolveCrashChain()
+
+        if !crashFadeStarted, crashElapsed >= crashFadeDelay {
+            crashFadeStarted = true
+            fadeToGameOver()
+        }
+    }
+
+    /// Fade the screen to black, then show the game-over UI on top.
+    private func fadeToGameOver() {
+        let overlay = SKSpriteNode(color: .black, size: size)
+        overlay.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        overlay.zPosition = 40
+        overlay.alpha = 0
+        addChild(overlay)
+        overlay.run(SKAction.sequence([
+            SKAction.fadeIn(withDuration: crashFadeDuration),
+            SKAction.run { [weak self] in
+                self?.isCrashing = false
+                self?.showGameOverUI()
+            }
+        ]))
+    }
+
+    /// Unrotated footprint, so a spinning car's bounding box doesn't cause phantom hits.
+    private func footprint(of node: SKNode) -> CGRect {
+        let size = (node as? SKSpriteNode)?.size ?? .zero
+        return CGRect(x: node.position.x - size.width / 2, y: node.position.y - size.height / 2,
+                      width: size.width, height: size.height)
+    }
+
+    /// A moving car that runs into another car passes some of its momentum on and bounces back a little.
+    /// Each pair only collides once.
+    private func resolveCrashChain() {
+        let bodies = crashBodies
+        for mover in bodies where mover.speed > 40 {
+            let moverBox = footprint(of: mover.node)
+            for other in npcs where other !== mover.node {
+                let key = [ObjectIdentifier(mover.node), ObjectIdentifier(other)].sorted { $0.hashValue < $1.hashValue }
+                guard !crashPairs.contains(key) else { continue }
+                let otherBox = footprint(of: other)
+                guard moverBox.intersects(otherBox) else { continue }
+                crashPairs.insert(key)
+
+                let overlap = moverBox.intersection(otherBox)
+                let dx = other.position.x - mover.node.position.x
+                let dy = other.position.y - mover.node.position.y
+                let dir = overlap.width < overlap.height
+                    ? CGVector(dx: dx >= 0 ? 1 : -1, dy: 0)
+                    : CGVector(dx: 0, dy: dy >= 0 ? 1 : -1)
+
+                let hitSpeed = max(mover.speed * 0.8, 60)
+                let target = crashBodies.first { $0.node === other } ?? {
+                    let body = CrashBody(node: other)
+                    crashBodies.append(body)
+                    return body
+                }()
+                target.velocity = CGVector(dx: dir.dx * hitSpeed, dy: dir.dy * hitSpeed)
+                target.spin = (dir.dx != 0 ? -dir.dx : dir.dy) * .pi * crashDrag * 0.6
+
+                // The mover rebounds off the car it hit
+                let along = mover.velocity.dx * dir.dx + mover.velocity.dy * dir.dy
+                mover.velocity.dx -= dir.dx * along * 1.3
+                mover.velocity.dy -= dir.dy * along * 1.3
+            }
+        }
+    }
+
+    private func stopGameplay() {
+        guard !isGameOver else { return }
         isGameOver = true
         scrollSpeed = 0
         jumpBoost = 0
@@ -621,35 +778,63 @@ class GameScene: SKScene {
         ambulanceWarningRemaining = 0
         clearLaneFlash()
         onJumpReadyChanged?(false)
+        onGameOver?()
+    }
 
-        let label = SKLabelNode(text: "GAME OVER")
-        label.fontName = "AvenirNext-Bold"
-        label.fontSize = 48
-        label.fontColor = .white
-        label.verticalAlignmentMode = .center
-        label.horizontalAlignmentMode = .center
-        label.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        label.zPosition = 20
-        addChild(label)
+    private func endGame() {
+        stopGameplay()
+        // Same blackout as a crash death, without the knockback hold
+        fadeToGameOver()
+    }
 
-        let buttonSize = CGSize(width: 160, height: 52)
-        let button = SKShapeNode(rectOf: buttonSize, cornerRadius: 12)
-        button.name = retryButtonName
-        button.fillColor = SKColor(white: 0.15, alpha: 0.9)
-        button.strokeColor = .white
-        button.lineWidth = 3
-        button.position = CGPoint(x: size.width / 2, y: size.height / 2 - 70)
-        button.zPosition = 20
+    private func showGameOverUI() {
+        let bannerTexture = SKTexture(imageNamed: "game.over")
+        bannerTexture.filteringMode = .nearest
+        let banner = SKSpriteNode(texture: bannerTexture)
 
-        let title = SKLabelNode(text: "RETRY")
-        title.name = retryButtonName
-        title.fontName = "AvenirNext-Bold"
-        title.fontSize = 28
-        title.fontColor = .white
-        title.verticalAlignmentMode = .center
-        title.horizontalAlignmentMode = .center
-        button.addChild(title)
+        let button = makeRetryButton()
+
+        // Fit banner above the icon so the whole stack stays on screen
+        let gap: CGFloat = 20
+        let maxStackHeight = size.height * 0.72
+        let maxBannerHeight = max(40, maxStackHeight - button.size.height - gap)
+        let maxBannerWidth = size.width * 0.55
+        let bannerScale = min(
+            maxBannerWidth / max(banner.size.width, 1),
+            maxBannerHeight / max(banner.size.height, 1)
+        )
+        banner.setScale(bannerScale)
+
+        let stackHeight = banner.frame.height + gap + button.size.height
+        let stackTop = size.height / 2 + stackHeight / 2
+        banner.position = CGPoint(x: size.width / 2, y: stackTop - banner.frame.height / 2)
+        button.position = CGPoint(
+            x: size.width / 2,
+            y: banner.position.y - banner.frame.height / 2 - gap - button.size.height / 2
+        )
+
+        banner.zPosition = 50
+        button.zPosition = 50
+        banner.alpha = 0
+        button.alpha = 0
+        addChild(banner)
         addChild(button)
+        banner.run(SKAction.fadeIn(withDuration: 0.25))
+        button.run(SKAction.fadeIn(withDuration: 0.25))
+    }
+
+    /// Plain SF Symbol refresh icon used as the retry control.
+    /// Rasterized first — SpriteKit often draws template SF Symbols as blank.
+    private func makeRetryButton() -> SKSpriteNode {
+        let config = UIImage.SymbolConfiguration(pointSize: 40, weight: .semibold)
+        let symbol = UIImage(systemName: "arrow.clockwise", withConfiguration: config)!
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        let rendered = UIGraphicsImageRenderer(size: symbol.size).image { _ in
+            symbol.draw(at: .zero)
+        }
+        let button = SKSpriteNode(texture: SKTexture(image: rendered))
+        button.name = retryButtonName
+        return button
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
