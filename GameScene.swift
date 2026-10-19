@@ -1,14 +1,28 @@
 import SpriteKit
 
 class GameScene: SKScene {
-    private let player: SKSpriteNode = {
+    private static let driveTexture: SKTexture = {
         let texture = SKTexture(imageNamed: "roadster.white")
         // Keeps pixel art crisp instead of blurred when scaled
         texture.filteringMode = .nearest
-        let pixels = texture.size()
-        let size = CGSize(width: pixels.width * NPCCar.artScale, height: pixels.height * NPCCar.artScale)
-        return SKSpriteNode(texture: texture, size: size)
+        return texture
     }()
+    private static let driveSize: CGSize = {
+        let pixels = driveTexture.size()
+        return CGSize(width: pixels.width * NPCCar.artScale, height: pixels.height * NPCCar.artScale)
+    }()
+    private let player = SKSpriteNode(texture: GameScene.driveTexture, size: GameScene.driveSize)
+
+    /// Barrel-roll frames, played across a jump from the ground (not roof bounces).
+    /// Every image in the atlas is used, in name order, so frames can be added or removed freely.
+    /// Frame names must not contain dots: atlas lookup treats everything after the last dot as an extension.
+    private static let rollTextures: [SKTexture] = {
+        let atlas = SKTextureAtlas(named: "RoadsterJump")
+        return atlas.textureNames.sorted().map { atlas.textureNamed($0) }
+    }()
+    /// Points per pixel of the roll art, chosen so its car body matches the driving sprite's size.
+    private let rollPointsPerPixel: CGFloat = 0.4
+    private var isRolling = false
     private var roads: [SKNode] = []
     private var lastTime: TimeInterval = 0
     private let normalSpeed: CGFloat = 500
@@ -40,7 +54,7 @@ class GameScene: SKScene {
     private let jumpAirtime: TimeInterval = 0.85
     private let jumpBoostSpeed: CGFloat = 200
     private let jumpCooldown: TimeInterval = 3.0
-    private let jumpPeakScale: CGFloat = 1.5
+    private let jumpPeakScale: CGFloat = 1.75
     private let playerGroundZ: CGFloat = 4
     private let playerAirZ: CGFloat = 10
     /// Extra speed while airborne. Kept separate from `scrollSpeed` so the shoulder
@@ -49,7 +63,6 @@ class GameScene: SKScene {
     private var jumpTimeRemaining: TimeInterval = 0
     /// Counts down from `jumpCooldown`, starting the moment a jump begins.
     private var jumpCooldownRemaining: TimeInterval = 0
-    private lazy var shadow = SKShapeNode(ellipseOf: player.size)
     private let cooldownBarBackground = SKSpriteNode(color: SKColor(white: 0, alpha: 0.5), size: CGSize(width: 120, height: 14))
     private let cooldownBarFill = SKSpriteNode(color: .orange, size: CGSize(width: 116, height: 10))
     private let cooldownReadyColor = SKColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1)
@@ -106,14 +119,6 @@ class GameScene: SKScene {
 
         player.position = CGPoint(x: xPosition(forLane: currentLane), y: size.height * 0.2)
         player.zPosition = playerGroundZ
-
-        shadow.fillColor = .black
-        shadow.strokeColor = .clear
-        shadow.alpha = 0.35
-        shadow.zPosition = playerGroundZ - 1
-        shadow.isHidden = true
-        shadow.position = player.position
-        addChild(shadow)
         addChild(player)
 
         spawner = TrafficSpawner(
@@ -189,7 +194,8 @@ class GameScene: SKScene {
         lastBouncedCar = nil
 
         player.zPosition = playerAirZ
-        shadow.isHidden = false
+        isRolling = true
+        showRollFrame(0)
         cooldownBarFill.removeAction(forKey: "ready")
         cooldownBarFill.alpha = 1
         cooldownBarFill.color = .orange
@@ -201,6 +207,7 @@ class GameScene: SKScene {
         if isPlayerAirborne {
             jumpTimeRemaining -= dt
             if jumpTimeRemaining <= 0 {
+                endRoll()
                 if let roof = carUnderPlayer() {
                     bounce(off: roof)
                 } else {
@@ -211,8 +218,9 @@ class GameScene: SKScene {
                 let progress = CGFloat(1 - jumpTimeRemaining / currentAirtime)
                 let height = sin(progress * .pi)
                 player.setScale(1 + (currentPeakScale - 1) * height)
-                shadow.setScale(1 - 0.25 * height)
-                shadow.alpha = 0.35 - 0.15 * height
+                if isRolling {
+                    showRollFrame(min(Int(progress * CGFloat(Self.rollTextures.count)), Self.rollTextures.count - 1))
+                }
             }
         }
 
@@ -229,6 +237,22 @@ class GameScene: SKScene {
                 cooldownBarFill.xScale = CGFloat(1 - jumpCooldownRemaining / jumpCooldown)
             }
         }
+    }
+
+    private func showRollFrame(_ index: Int) {
+        let texture = Self.rollTextures[index]
+        guard player.texture !== texture else { return }
+        let pixels = texture.size()
+        player.texture = texture
+        player.size = CGSize(width: pixels.width * rollPointsPerPixel, height: pixels.height * rollPointsPerPixel)
+    }
+
+    /// Back to the driving sprite. Must run before anything reads the player's size as a hitbox.
+    private func endRoll() {
+        guard isRolling else { return }
+        isRolling = false
+        player.texture = Self.driveTexture
+        player.size = Self.driveSize
     }
 
     /// The car the player's hitbox overlaps at the moment a hop ends, if any.
@@ -296,9 +320,6 @@ class GameScene: SKScene {
         if jumpCooldownRemaining <= 0 && !isGameOver { onJumpReadyChanged?(true) }
         player.setScale(1)
         player.zPosition = playerGroundZ
-        shadow.isHidden = true
-        shadow.setScale(1)
-        shadow.alpha = 0.35
     }
 
     private func flashCooldownBar() {
@@ -307,11 +328,6 @@ class GameScene: SKScene {
             SKAction.fadeAlpha(to: 1, duration: 0.08)
         ])
         cooldownBarFill.run(SKAction.repeat(flash, count: 3), withKey: "ready")
-    }
-
-    override func didEvaluateActions() {
-        // Keep the shadow under the player while the lane-change action moves it
-        shadow.position = player.position
     }
 
     func changeLane(by delta: Int) {
