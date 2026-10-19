@@ -26,7 +26,7 @@ class GameScene: SKScene {
     private let maxDeltaTime: TimeInterval = 1.0 / 30.0
     private var elapsedTime: TimeInterval = 0
     private var spawner: TrafficSpawner!
-    private let trafficColor = SKColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1)
+    // Regular traffic shows the plain jeep art; parked and wall cars are tinted.
     private let parkedColor = SKColor(red: 0.9, green: 0.75, blue: 0.2, alpha: 1)
     /// Wall cars (jump required) look different from regular and parked traffic.
     private let wallColor = SKColor(red: 0.85, green: 0.15, blue: 0.2, alpha: 1)
@@ -433,7 +433,7 @@ class GameScene: SKScene {
                 lane: request.lane,
                 speed: request.speed,
                 isParked: request.isParked,
-                color: request.isWall ? wallColor : (request.isParked ? parkedColor : trafficColor)
+                tint: request.isWall ? wallColor : (request.isParked ? parkedColor : nil)
             )
             car.position = CGPoint(x: xPosition(forLane: car.lane), y: size.height + car.size.height / 2)
             car.zPosition = 5
