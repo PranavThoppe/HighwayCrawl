@@ -1,7 +1,14 @@
 import SpriteKit
 
 class GameScene: SKScene {
-    private let player = SKSpriteNode(color: .red, size: CGSize(width: 40, height: 70))
+    private let player: SKSpriteNode = {
+        let texture = SKTexture(imageNamed: "roadster.white")
+        // Keeps pixel art crisp instead of blurred when scaled
+        texture.filteringMode = .nearest
+        let pixels = texture.size()
+        let size = CGSize(width: pixels.width * NPCCar.artScale, height: pixels.height * NPCCar.artScale)
+        return SKSpriteNode(texture: texture, size: size)
+    }()
     private var roads: [SKNode] = []
     private var lastTime: TimeInterval = 0
     private let normalSpeed: CGFloat = 500
@@ -42,7 +49,7 @@ class GameScene: SKScene {
     private var jumpTimeRemaining: TimeInterval = 0
     /// Counts down from `jumpCooldown`, starting the moment a jump begins.
     private var jumpCooldownRemaining: TimeInterval = 0
-    private let shadow = SKShapeNode(ellipseOf: CGSize(width: 40, height: 70))
+    private lazy var shadow = SKShapeNode(ellipseOf: player.size)
     private let cooldownBarBackground = SKSpriteNode(color: SKColor(white: 0, alpha: 0.5), size: CGSize(width: 120, height: 14))
     private let cooldownBarFill = SKSpriteNode(color: .orange, size: CGSize(width: 116, height: 10))
     private let cooldownReadyColor = SKColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1)
