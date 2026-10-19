@@ -37,7 +37,7 @@ class GameScene: SKScene {
     private let parkedColor = SKColor(red: 0.9, green: 0.75, blue: 0.2, alpha: 1)
 
     // Jump
-    private let jumpAirtime: TimeInterval = 0.65
+    private let jumpAirtime: TimeInterval = 0.85
     private let jumpBoostSpeed: CGFloat = 200
     private let jumpCooldown: TimeInterval = 3.0
     private let jumpPeakScale: CGFloat = 1.5
@@ -61,7 +61,7 @@ class GameScene: SKScene {
     /// Distance units earned per point travelled.
     private let pointsPerDistance: CGFloat = 0.1
     /// Duration and peak scale of the hop currently in progress (jump or bounce).
-    private var currentAirtime: TimeInterval = 0.65
+    private var currentAirtime: TimeInterval = 0.85
     private var currentPeakScale: CGFloat = 1.5
     /// Roofs landed on in the current airborne chain; 0 when on the ground.
     private var comboCount = 0
