@@ -26,10 +26,8 @@ class GameScene: SKScene {
     private let maxDeltaTime: TimeInterval = 1.0 / 30.0
     private var elapsedTime: TimeInterval = 0
     private var spawner: TrafficSpawner!
-    // Regular traffic shows the plain jeep art; parked and wall cars are tinted.
+    // Parked cars are tinted yellow; wall cars use plain box-truck art.
     private let parkedColor = SKColor(red: 0.9, green: 0.75, blue: 0.2, alpha: 1)
-    /// Wall cars (jump required) look different from regular and parked traffic.
-    private let wallColor = SKColor(red: 0.85, green: 0.15, blue: 0.2, alpha: 1)
 
     // Jump
     private let jumpAirtime: TimeInterval = 0.65
@@ -433,7 +431,8 @@ class GameScene: SKScene {
                 lane: request.lane,
                 speed: request.speed,
                 isParked: request.isParked,
-                tint: request.isWall ? wallColor : (request.isParked ? parkedColor : nil)
+                isWall: request.isWall,
+                tint: request.isParked && !request.isWall ? parkedColor : nil
             )
             car.position = CGPoint(x: xPosition(forLane: car.lane), y: size.height + car.size.height / 2)
             car.zPosition = 5
@@ -461,7 +460,6 @@ class GameScene: SKScene {
     // A faster car that closes within `followDistance` of the car ahead slows to its speed.
     private func matchSpeedsWithCarsAhead() {
         let followDistance: CGFloat = 40
-        let carHeight = NPCCar.carSize.height
         let moving = npcs.filter { !$0.isParked }
         for lane in 1...laneCount {
             let inLane = moving.filter { $0.lane == lane }.sorted { $0.position.y < $1.position.y }
@@ -470,7 +468,7 @@ class GameScene: SKScene {
             for i in stride(from: inLane.count - 2, through: 0, by: -1) {
                 let behind = inLane[i]
                 let ahead = inLane[i + 1]
-                let gap = ahead.position.y - behind.position.y - carHeight
+                let gap = ahead.position.y - behind.position.y - (ahead.size.height + behind.size.height) / 2
                 if gap < followDistance, behind.forwardSpeed > ahead.forwardSpeed {
                     behind.forwardSpeed = ahead.forwardSpeed
                 }

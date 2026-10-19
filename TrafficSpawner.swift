@@ -134,7 +134,7 @@ final class TrafficSpawner {
         playerY: CGFloat,
         playerSpeed: CGFloat = 500,
         playerHeight: CGFloat = 70,
-        carHeight: CGFloat = NPCCar.carSize.height,
+        carHeight: CGFloat = NPCCar.maxCarHeight,
         startLane: Int = 2
     ) {
         self.laneCount = laneCount
