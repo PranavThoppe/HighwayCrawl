@@ -40,9 +40,12 @@ class GameScene: SKScene {
 
     /// Called when the player taps the retry button after a game over.
     var onRetry: (() -> Void)?
+    /// Called when the player taps the back button after a game over.
+    var onBackToMenu: (() -> Void)?
     /// Called when gameplay stops (crash or shoulder) so the host can hide its controls.
     var onGameOver: (() -> Void)?
     private let retryButtonName = "retryButton"
+    private let backButtonName = "backButton"
 
     // NPC traffic
     private var npcs: [NPCCar] = []
@@ -83,10 +86,24 @@ class GameScene: SKScene {
     /// Roofs landed on in the current airborne chain; 0 when on the ground.
     private var comboCount = 0
     private var lastBouncedCar: NPCCar?
+    /// Set while airborne if the player overlaps a jump-required box-truck wall.
+    private var crossedWallWhileAirborne = false
     private var distanceScore: CGFloat = 0
     private var bonusScore = 0
-    private var shownScore = -1
-    private let scoreLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
+    private var lastScoreCheck = -1
+    private var toastAnchor = CGPoint.zero
+    private var nextAchievementToastSlot = 0
+    private var activeAchievementToasts = 0
+    private static let achievementGold = SKColor(red: 0.96, green: 0.78, blue: 0.22, alpha: 1)
+    private static let trophyTexture: SKTexture = {
+        let config = UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
+        let symbol = UIImage(systemName: "trophy.fill", withConfiguration: config)!
+            .withTintColor(UIColor(red: 0.96, green: 0.78, blue: 0.22, alpha: 1), renderingMode: .alwaysOriginal)
+        let rendered = UIGraphicsImageRenderer(size: symbol.size).image { _ in
+            symbol.draw(at: .zero)
+        }
+        return SKTexture(image: rendered)
+    }()
 
     // Ambulance: after the unlock score, every interval has a chance to send one
     // from behind in the player's lane. The only warning is a red lane flash.
@@ -136,32 +153,25 @@ class GameScene: SKScene {
         spawner.isJumpReady = { [weak self] in self?.isJumpReady ?? false }
 
         setupCooldownBar(in: view)
-        setupScoreLabel(in: view)
+        setupToastAnchor(in: view)
         nextAmbulanceCheckScore = ambulanceUnlockScore
     }
 
-    private func setupScoreLabel(in view: SKView) {
+    private func setupToastAnchor(in view: SKView) {
         let insets = view.safeAreaInsets
-        scoreLabel.fontSize = 24
-        scoreLabel.fontColor = .white
-        scoreLabel.horizontalAlignmentMode = .right
-        scoreLabel.verticalAlignmentMode = .center
-        scoreLabel.position = CGPoint(
+        toastAnchor = CGPoint(
             x: size.width - max(16, insets.right + 16),
             y: size.height - max(24, insets.top + 24)
         )
-        scoreLabel.zPosition = 30
-        addChild(scoreLabel)
-        refreshScoreLabel()
     }
 
     private var totalScore: Int { Int(distanceScore) + bonusScore }
 
-    private func refreshScoreLabel() {
+    private func checkScoreProgress() {
         let score = totalScore
-        guard score != shownScore else { return }
-        shownScore = score
-        scoreLabel.text = "\(score)"
+        guard score != lastScoreCheck else { return }
+        lastScoreCheck = score
+        showAchievementToasts(AchievementStore.scored(score))
     }
 
     private func setupCooldownBar(in view: SKView) {
@@ -195,6 +205,8 @@ class GameScene: SKScene {
         currentPeakScale = jumpPeakScale
         comboCount = 0
         lastBouncedCar = nil
+        crossedWallWhileAirborne = false
+        showAchievementToasts(AchievementStore.jumped())
 
         player.zPosition = playerAirZ
         isRolling = true
@@ -224,6 +236,7 @@ class GameScene: SKScene {
                 if isRolling {
                     showRollFrame(min(Int(progress * CGFloat(Self.rollTextures.count)), Self.rollTextures.count - 1))
                 }
+                noteWallCrossingIfNeeded()
             }
         }
 
@@ -278,8 +291,14 @@ class GameScene: SKScene {
             comboCount += 1
             let bonus = car.isAmbulance ? ambulanceBonus : roofBonus * comboCount
             bonusScore += bonus
-            refreshScoreLabel()
+            checkScoreProgress()
             showBonusLabel(bonus: bonus, combo: car.isAmbulance ? 1 : comboCount)
+            showAchievementToasts(AchievementStore.bounced(
+                combo: comboCount,
+                isParked: car.isParked,
+                isAmbulance: car.isAmbulance,
+                isWall: car.isWall
+            ))
         }
         lastBouncedCar = car
 
@@ -289,6 +308,57 @@ class GameScene: SKScene {
         jumpBoost = jumpBoostSpeed
         player.setScale(1)
         player.zPosition = playerAirZ
+    }
+
+    private func showAchievementToasts(_ achievements: [Achievement]) {
+        for achievement in achievements {
+            let slot = nextAchievementToastSlot
+            nextAchievementToastSlot += 1
+            activeAchievementToasts += 1
+            presentAchievementToast(achievement, slot: slot)
+        }
+    }
+
+    /// Gold trophy + name, stacked in the top-right. Several can appear at once.
+    private func presentAchievementToast(_ achievement: Achievement, slot: Int) {
+        let name = SKLabelNode(fontNamed: "AvenirNext-Bold")
+        name.text = achievement.name
+        name.fontSize = 16
+        name.fontColor = Self.achievementGold
+        name.horizontalAlignmentMode = .right
+        name.verticalAlignmentMode = .center
+
+        let toast = SKNode()
+        toast.addChild(name)
+
+        let icon = SKSpriteNode(texture: Self.trophyTexture)
+        icon.anchorPoint = CGPoint(x: 1, y: 0.5)
+        icon.position = CGPoint(x: -name.frame.width - 8, y: 0)
+        toast.addChild(icon)
+        toast.alpha = 0
+        toast.zPosition = 32
+        toast.position = CGPoint(
+            x: toastAnchor.x,
+            y: toastAnchor.y - 8 - CGFloat(slot) * 26
+        )
+        addChild(toast)
+
+        toast.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.fadeIn(withDuration: 0.15),
+                SKAction.moveBy(x: 0, y: 8, duration: 0.2)
+            ]),
+            SKAction.wait(forDuration: 1.6),
+            SKAction.fadeOut(withDuration: 0.35),
+            SKAction.run { [weak self, weak toast] in
+                toast?.removeFromParent()
+                guard let self else { return }
+                self.activeAchievementToasts -= 1
+                if self.activeAchievementToasts == 0 {
+                    self.nextAchievementToastSlot = 0
+                }
+            }
+        ]))
     }
 
     private func showBonusLabel(bonus: Int, combo: Int) {
@@ -314,11 +384,15 @@ class GameScene: SKScene {
     }
 
     private func landPlayer() {
+        if crossedWallWhileAirborne {
+            showAchievementToasts(AchievementStore.clearedWall())
+        }
         isPlayerAirborne = false
         jumpTimeRemaining = 0
         jumpBoost = 0
         comboCount = 0
         lastBouncedCar = nil
+        crossedWallWhileAirborne = false
         // The cooldown may have run out mid-air (e.g. a long bounce chain)
         if jumpCooldownRemaining <= 0 && !isGameOver { onJumpReadyChanged?(true) }
         player.setScale(1)
@@ -451,7 +525,7 @@ class GameScene: SKScene {
         updateJump(dt: dt)
         let effectiveSpeed = scrollSpeed + jumpBoost
         distanceScore += effectiveSpeed * CGFloat(dt) * pointsPerDistance
-        refreshScoreLabel()
+        checkScoreProgress()
 
         for road in roads {
             road.position.y -= effectiveSpeed * CGFloat(dt)
@@ -568,6 +642,17 @@ class GameScene: SKScene {
             let offscreen = car.position.y < removeBelow || car.position.y > removeAbove
             if offscreen { car.removeFromParent() }
             return offscreen
+        }
+        if npcs.contains(where: { $0.isAmbulance && $0.position.y > player.position.y }) {
+            showAchievementToasts(AchievementStore.survivedAmbulance())
+        }
+    }
+
+    private func noteWallCrossingIfNeeded() {
+        guard !crossedWallWhileAirborne else { return }
+        let box = player.frame.insetBy(dx: 4, dy: 6)
+        if npcs.contains(where: { $0.isWall && box.intersects($0.frame) }) {
+            crossedWallWhileAirborne = true
         }
     }
 
@@ -779,6 +864,7 @@ class GameScene: SKScene {
         clearLaneFlash()
         onJumpReadyChanged?(false)
         onGameOver?()
+        showAchievementToasts(AchievementStore.finishedRun())
     }
 
     private func endGame() {
@@ -792,12 +878,23 @@ class GameScene: SKScene {
         bannerTexture.filteringMode = .nearest
         let banner = SKSpriteNode(texture: bannerTexture)
 
-        let button = makeRetryButton()
+        let scoreNode = SKLabelNode(fontNamed: "AvenirNext-Bold")
+        scoreNode.text = Self.formattedScore(totalScore)
+        scoreNode.fontSize = 36
+        scoreNode.fontColor = .white
+        scoreNode.horizontalAlignmentMode = .center
+        scoreNode.verticalAlignmentMode = .center
 
-        // Fit banner above the icon so the whole stack stays on screen
+        let backButton = makeGameOverButton(systemName: "chevron.left", name: backButtonName)
+        let retryButton = makeGameOverButton(systemName: "arrow.clockwise", name: retryButtonName)
+
+        // Fit banner above the score and icons so the whole stack stays on screen
         let gap: CGFloat = 20
+        let scoreGap: CGFloat = 16
+        let buttonRowHeight = max(backButton.size.height, retryButton.size.height)
+        let scoreHeight = max(scoreNode.frame.height, 36)
         let maxStackHeight = size.height * 0.72
-        let maxBannerHeight = max(40, maxStackHeight - button.size.height - gap)
+        let maxBannerHeight = max(40, maxStackHeight - buttonRowHeight - gap - scoreHeight - scoreGap)
         let maxBannerWidth = size.width * 0.55
         let bannerScale = min(
             maxBannerWidth / max(banner.size.width, 1),
@@ -805,35 +902,63 @@ class GameScene: SKScene {
         )
         banner.setScale(bannerScale)
 
-        let stackHeight = banner.frame.height + gap + button.size.height
+        let stackHeight = banner.frame.height + gap + scoreHeight + scoreGap + buttonRowHeight
         let stackTop = size.height / 2 + stackHeight / 2
         banner.position = CGPoint(x: size.width / 2, y: stackTop - banner.frame.height / 2)
-        button.position = CGPoint(
+        scoreNode.position = CGPoint(
             x: size.width / 2,
-            y: banner.position.y - banner.frame.height / 2 - gap - button.size.height / 2
+            y: banner.position.y - banner.frame.height / 2 - gap - scoreHeight / 2
+        )
+
+        let buttonY = scoreNode.position.y - scoreHeight / 2 - scoreGap - buttonRowHeight / 2
+        let buttonGap: CGFloat = 56
+        backButton.position = CGPoint(
+            x: size.width / 2 - buttonGap / 2 - backButton.size.width / 2,
+            y: buttonY
+        )
+        retryButton.position = CGPoint(
+            x: size.width / 2 + buttonGap / 2 + retryButton.size.width / 2,
+            y: buttonY
         )
 
         banner.zPosition = 50
-        button.zPosition = 50
+        scoreNode.zPosition = 50
+        backButton.zPosition = 50
+        retryButton.zPosition = 50
         banner.alpha = 0
-        button.alpha = 0
+        scoreNode.alpha = 0
+        backButton.alpha = 0
+        retryButton.alpha = 0
         addChild(banner)
-        addChild(button)
+        addChild(scoreNode)
+        addChild(backButton)
+        addChild(retryButton)
         banner.run(SKAction.fadeIn(withDuration: 0.25))
-        button.run(SKAction.fadeIn(withDuration: 0.25))
+        scoreNode.run(SKAction.fadeIn(withDuration: 0.25))
+        backButton.run(SKAction.fadeIn(withDuration: 0.25))
+        retryButton.run(SKAction.fadeIn(withDuration: 0.25))
     }
 
-    /// Plain SF Symbol refresh icon used as the retry control.
+    private static func formattedScore(_ score: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: score)) ?? "\(score)"
+    }
+
+    /// Plain SF Symbol used as a game-over control.
     /// Rasterized first — SpriteKit often draws template SF Symbols as blank.
-    private func makeRetryButton() -> SKSpriteNode {
+    private func makeGameOverButton(systemName: String, name: String) -> SKSpriteNode {
         let config = UIImage.SymbolConfiguration(pointSize: 40, weight: .semibold)
-        let symbol = UIImage(systemName: "arrow.clockwise", withConfiguration: config)!
+        let symbol = UIImage(systemName: systemName, withConfiguration: config)!
             .withTintColor(.white, renderingMode: .alwaysOriginal)
         let rendered = UIGraphicsImageRenderer(size: symbol.size).image { _ in
             symbol.draw(at: .zero)
         }
-        let button = SKSpriteNode(texture: SKTexture(image: rendered))
-        button.name = retryButtonName
+        let hitSize: CGFloat = 64
+        let button = SKSpriteNode(color: .clear, size: CGSize(width: hitSize, height: hitSize))
+        button.name = name
+        let icon = SKSpriteNode(texture: SKTexture(image: rendered))
+        button.addChild(icon)
         return button
     }
 
@@ -842,6 +967,8 @@ class GameScene: SKScene {
         let tapped = nodes(at: touch.location(in: self))
         if tapped.contains(where: { $0.name == retryButtonName }) {
             onRetry?()
+        } else if tapped.contains(where: { $0.name == backButtonName }) {
+            onBackToMenu?()
         }
     }
 }

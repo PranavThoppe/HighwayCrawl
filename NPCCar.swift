@@ -69,6 +69,7 @@ final class NPCCar: SKSpriteNode {
     /// Mutable so a car can slow down to match the car ahead of it.
     var forwardSpeed: CGFloat
     let isParked: Bool
+    let isWall: Bool
     let isAmbulance: Bool
 
     /// - Parameters:
@@ -83,6 +84,7 @@ final class NPCCar: SKSpriteNode {
         self.lane = lane
         self.forwardSpeed = isParked ? 0 : speed
         self.isParked = isParked
+        self.isWall = isWall
         self.isAmbulance = isAmbulance
         let texture = isAmbulance
             ? NPCCar.ambulanceTexture

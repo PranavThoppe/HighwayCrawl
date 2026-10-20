@@ -18,7 +18,7 @@ class GameViewController: UIViewController {
     private let achievementsButton = UIButton(type: .system)
     private let settingsButton = UIButton(type: .system)
     private var menuButtonsRevealWork: DispatchWorkItem?
-    private var menuPopupView: MenuPopupView?
+    private var menuPopupView: UIView?
     private let laneLeftButton = UIButton(type: .system)
     private let laneRightButton = UIButton(type: .system)
     private let actionButton = UIButton(type: .system)
@@ -122,8 +122,17 @@ class GameViewController: UIViewController {
         }
         gameScene = nil
         setControlsHidden(true)
-        skView.presentScene(menu)
-        menuVideoView.play(resource: "MenuScreenBackground", withExtension: "mov")
+        if skView.scene is GameScene {
+            menuVideoView.alpha = 0
+            menuVideoView.play(resource: "MenuScreenBackground", withExtension: "mov")
+            UIView.animate(withDuration: 0.4) {
+                self.menuVideoView.alpha = 1
+            }
+            skView.presentScene(menu, transition: .fade(withDuration: 0.4))
+        } else {
+            skView.presentScene(menu)
+            menuVideoView.play(resource: "MenuScreenBackground", withExtension: "mov")
+        }
         scheduleMenuButtonsReveal()
     }
 
@@ -145,6 +154,10 @@ class GameViewController: UIViewController {
         scene.onRetry = { [weak self] in
             guard let self else { return }
             self.startNewGame(size: self.skView.bounds.size)
+        }
+        scene.onBackToMenu = { [weak self] in
+            guard let self else { return }
+            self.showMenu(size: self.skView.bounds.size)
         }
         scene.onGameOver = { [weak self] in
             self?.setControlsHidden(true)
@@ -290,28 +303,29 @@ class GameViewController: UIViewController {
     }
 
     @objc private func didTapAchievements() {
-        showMenuPopup(
-            title: "Achievements",
-            message: "Unlock trophies as you crawl the highway. This list will fill in later."
-        )
-    }
-
-    @objc private func didTapSettings() {
-        showMenuPopup(
-            title: "Settings",
-            message: "Audio, controls, and other options will live here."
-        )
-    }
-
-    private func showMenuPopup(title: String, message: String) {
-        dismissMenuPopup()
-
-        let popup = MenuPopupView(title: title, message: message)
-        popup.translatesAutoresizingMaskIntoConstraints = false
-        popup.alpha = 0
+        let popup = AchievementsPopupView(achievements: AchievementCatalog.all)
         popup.onDismiss = { [weak self] in
             self?.dismissMenuPopup()
         }
+        presentMenuOverlay(popup)
+    }
+
+    @objc private func didTapSettings() {
+        let popup = MenuPopupView(
+            title: "Settings",
+            message: "Audio, controls, and other options will live here."
+        )
+        popup.onDismiss = { [weak self] in
+            self?.dismissMenuPopup()
+        }
+        presentMenuOverlay(popup)
+    }
+
+    private func presentMenuOverlay(_ popup: UIView) {
+        dismissMenuPopup()
+
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        popup.alpha = 0
         menuVideoView.addSubview(popup)
         NSLayoutConstraint.activate([
             popup.topAnchor.constraint(equalTo: menuVideoView.topAnchor),
@@ -516,5 +530,180 @@ private final class MenuPopupView: UIView, UIGestureRecognizerDelegate {
 
     @objc private func didTapClose() {
         onDismiss?()
+    }
+}
+
+/// Scrollable trophy list. Earned trophies read from `AchievementStore`.
+private final class AchievementsPopupView: UIView, UIGestureRecognizerDelegate {
+
+    var onDismiss: (() -> Void)?
+
+    private let card = UIView()
+
+    init(achievements: [Achievement]) {
+        super.init(frame: .zero)
+        backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        isUserInteractionEnabled = true
+
+        let backdropTap = UITapGestureRecognizer(target: self, action: #selector(didTapBackdrop))
+        backdropTap.delegate = self
+        addGestureRecognizer(backdropTap)
+
+        card.backgroundColor = UIColor(white: 0.1, alpha: 0.96)
+        card.layer.cornerRadius = 16
+        card.layer.borderWidth = 2
+        card.layer.borderColor = UIColor.white.cgColor
+        card.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(card)
+
+        let titleLabel = UILabel()
+        titleLabel.text = "Achievements"
+        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
+        titleLabel.textAlignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let listStack = UIStackView()
+        listStack.axis = .vertical
+        listStack.alignment = .fill
+        listStack.spacing = 0
+        listStack.translatesAutoresizingMaskIntoConstraints = false
+
+        for (index, achievement) in achievements.enumerated() {
+            listStack.addArrangedSubview(
+                AchievementRowView(
+                    achievement: achievement,
+                    isUnlocked: AchievementStore.isUnlocked(achievement.id)
+                )
+            )
+            if index < achievements.count - 1 {
+                let divider = UIView()
+                divider.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+                divider.translatesAutoresizingMaskIntoConstraints = false
+                divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+                listStack.addArrangedSubview(divider)
+            }
+        }
+
+        let scrollView = UIScrollView()
+        scrollView.alwaysBounceVertical = true
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.indicatorStyle = .white
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(listStack)
+
+        let closeButton = makeCloseButton()
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+
+        card.addSubview(titleLabel)
+        card.addSubview(scrollView)
+        card.addSubview(closeButton)
+
+        NSLayoutConstraint.activate([
+            card.centerXAnchor.constraint(equalTo: centerXAnchor),
+            card.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.62),
+            card.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -48),
+            card.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 16),
+            card.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+            titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+            titleLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
+
+            scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            scrollView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            scrollView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            scrollView.bottomAnchor.constraint(equalTo: closeButton.topAnchor, constant: -16),
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 140),
+
+            listStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            listStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            listStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            listStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+
+            closeButton.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+            closeButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
+            closeButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+            closeButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func makeCloseButton() -> UIButton {
+        var closeConfig = UIButton.Configuration.plain()
+        closeConfig.title = "Close"
+        closeConfig.baseForegroundColor = .white
+        closeConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 16, weight: .semibold)
+            outgoing.foregroundColor = .white
+            return outgoing
+        }
+        let closeButton = UIButton(type: .system)
+        closeButton.configuration = closeConfig
+        closeButton.layer.borderWidth = 2
+        closeButton.layer.borderColor = UIColor.white.cgColor
+        closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
+        return closeButton
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        !card.frame.contains(touch.location(in: self))
+    }
+
+    @objc private func didTapBackdrop() {
+        onDismiss?()
+    }
+
+    @objc private func didTapClose() {
+        onDismiss?()
+    }
+}
+
+private final class AchievementRowView: UIView {
+
+    private static let gold = UIColor(red: 0.96, green: 0.78, blue: 0.22, alpha: 1)
+
+    init(achievement: Achievement, isUnlocked: Bool) {
+        super.init(frame: .zero)
+
+        let icon = UIImageView(image: UIImage(systemName: isUnlocked ? "trophy.fill" : "trophy"))
+        icon.tintColor = isUnlocked ? Self.gold : UIColor.white.withAlphaComponent(0.45)
+        icon.contentMode = .scaleAspectFit
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let nameLabel = UILabel()
+        nameLabel.text = achievement.name
+        nameLabel.textColor = UIColor.white.withAlphaComponent(isUnlocked ? 1 : 0.92)
+        nameLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nameLabel.numberOfLines = 1
+
+        let row = UIStackView(arrangedSubviews: [icon, nameLabel])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 12
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+
+        isAccessibilityElement = true
+        accessibilityLabel = "\(achievement.name). \(isUnlocked ? "Unlocked" : "Locked")"
+
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 22),
+            icon.heightAnchor.constraint(equalToConstant: 22),
+
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
