@@ -19,12 +19,18 @@ final class LoopingVideoView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
-        isUserInteractionEnabled = false
+        isUserInteractionEnabled = true
         playerLayer.videoGravity = .resizeAspectFill
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Buttons and popups keep their touches; empty video area falls through to `MenuScene`.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
     }
 
     func play(resource: String, withExtension ext: String) {
