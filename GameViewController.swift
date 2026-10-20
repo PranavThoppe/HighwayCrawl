@@ -12,6 +12,8 @@ import GameplayKit
 class GameViewController: UIViewController {
 
     private let skView = SKView()
+    private let menuVideoView = LoopingVideoView()
+    private let menuLogoView = UIImageView(image: UIImage(named: "menu.logo"))
     private let laneLeftButton = UIButton(type: .system)
     private let laneRightButton = UIButton(type: .system)
     private let actionButton = UIButton(type: .system)
@@ -66,11 +68,31 @@ class GameViewController: UIViewController {
         skView.showsNodeCount = true
         view.addSubview(skView)
 
+        menuVideoView.translatesAutoresizingMaskIntoConstraints = false
+        menuVideoView.isHidden = true
+        view.addSubview(menuVideoView)
+
+        menuLogoView.translatesAutoresizingMaskIntoConstraints = false
+        menuLogoView.contentMode = .scaleAspectFit
+        menuVideoView.addSubview(menuLogoView)
+
+        let logoAspect = menuLogoView.image.map { $0.size.height / $0.size.width } ?? 0.45
+
         NSLayoutConstraint.activate([
+            menuLogoView.topAnchor.constraint(equalTo: menuVideoView.safeAreaLayoutGuide.topAnchor, constant: 16),
+            menuLogoView.trailingAnchor.constraint(equalTo: menuVideoView.trailingAnchor, constant: -12),
+            menuLogoView.widthAnchor.constraint(equalTo: menuVideoView.widthAnchor, multiplier: 0.42),
+            menuLogoView.heightAnchor.constraint(equalTo: menuLogoView.widthAnchor, multiplier: logoAspect),
+
             skView.topAnchor.constraint(equalTo: view.topAnchor),
             skView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             skView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            skView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            skView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            menuVideoView.topAnchor.constraint(equalTo: view.topAnchor),
+            menuVideoView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            menuVideoView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            menuVideoView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
 
@@ -80,10 +102,33 @@ class GameViewController: UIViewController {
         guard size.width > 0, size.height > 0 else { return }
 
         hasPresentedScene = true
-        startNewGame(size: size)
+        showMenu(size: size)
+    }
+
+    private func showMenu(size: CGSize) {
+        let menu = MenuScene(size: size)
+        menu.scaleMode = .resizeFill
+        menu.onPlay = { [weak self] in
+            guard let self else { return }
+            self.startNewGame(size: self.skView.bounds.size)
+        }
+        gameScene = nil
+        setControlsHidden(true)
+        skView.presentScene(menu)
+        menuVideoView.play(resource: "MenuScreenBackground", withExtension: "mov")
+    }
+
+    private func dismissMenuVideo() {
+        guard menuVideoView.isPlaying else { return }
+        UIView.animate(withDuration: 0.4, animations: {
+            self.menuVideoView.alpha = 0
+        }, completion: { _ in
+            self.menuVideoView.stop()
+        })
     }
 
     private func startNewGame(size: CGSize) {
+        dismissMenuVideo()
         let scene = GameScene(size: size)
         scene.scaleMode = .resizeFill
         scene.onRetry = { [weak self] in
@@ -99,7 +144,7 @@ class GameViewController: UIViewController {
         setControlsHidden(false)
         setJumpReady(true)
         gameScene = scene
-        skView.presentScene(scene)
+        skView.presentScene(scene, transition: .fade(withDuration: 0.4))
     }
 
     private func setControlsHidden(_ hidden: Bool) {
