@@ -888,13 +888,13 @@ class GameScene: SKScene {
         let backButton = makeGameOverButton(systemName: "chevron.left", name: backButtonName)
         let retryButton = makeGameOverButton(systemName: "arrow.clockwise", name: retryButtonName)
 
-        // Fit banner above the score and icons so the whole stack stays on screen
+        // Fit banner above the score and retry icon so the whole stack stays on screen
         let gap: CGFloat = 20
         let scoreGap: CGFloat = 16
-        let buttonRowHeight = max(backButton.size.height, retryButton.size.height)
+        let retryHeight = retryButton.size.height
         let scoreHeight = max(scoreNode.frame.height, 36)
         let maxStackHeight = size.height * 0.72
-        let maxBannerHeight = max(40, maxStackHeight - buttonRowHeight - gap - scoreHeight - scoreGap)
+        let maxBannerHeight = max(40, maxStackHeight - retryHeight - gap - scoreHeight - scoreGap)
         let maxBannerWidth = size.width * 0.55
         let bannerScale = min(
             maxBannerWidth / max(banner.size.width, 1),
@@ -902,23 +902,24 @@ class GameScene: SKScene {
         )
         banner.setScale(bannerScale)
 
-        let stackHeight = banner.frame.height + gap + scoreHeight + scoreGap + buttonRowHeight
+        let stackHeight = banner.frame.height + gap + scoreHeight + scoreGap + retryHeight
         let stackTop = size.height / 2 + stackHeight / 2
         banner.position = CGPoint(x: size.width / 2, y: stackTop - banner.frame.height / 2)
         scoreNode.position = CGPoint(
             x: size.width / 2,
             y: banner.position.y - banner.frame.height / 2 - gap - scoreHeight / 2
         )
-
-        let buttonY = scoreNode.position.y - scoreHeight / 2 - scoreGap - buttonRowHeight / 2
-        let buttonGap: CGFloat = 56
-        backButton.position = CGPoint(
-            x: size.width / 2 - buttonGap / 2 - backButton.size.width / 2,
-            y: buttonY
-        )
         retryButton.position = CGPoint(
-            x: size.width / 2 + buttonGap / 2 + retryButton.size.width / 2,
-            y: buttonY
+            x: size.width / 2,
+            y: scoreNode.position.y - scoreHeight / 2 - scoreGap - retryHeight / 2
+        )
+
+        let insets = view?.safeAreaInsets ?? .zero
+        let backPaddingX = max(16, insets.left + 16)
+        let backPaddingY = max(24, insets.top + 24)
+        backButton.position = CGPoint(
+            x: backPaddingX + backButton.size.width / 2,
+            y: size.height - backPaddingY - backButton.size.height / 2
         )
 
         banner.zPosition = 50
