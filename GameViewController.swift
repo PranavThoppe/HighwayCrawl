@@ -120,6 +120,9 @@ class GameViewController: UIViewController {
             guard let self else { return }
             self.startNewGame(size: self.skView.bounds.size)
         }
+        menu.onTap = { [weak self] in
+            self?.skipMenuButtonsWait() ?? false
+        }
         gameScene = nil
         setControlsHidden(true)
         if skView.scene is GameScene {
@@ -266,10 +269,19 @@ class GameViewController: UIViewController {
         cancelMenuButtonsReveal()
         resetMenuButtonsHidden()
         let work = DispatchWorkItem { [weak self] in
+            self?.menuButtonsRevealWork = nil
             self?.revealMenuButtons()
         }
         menuButtonsRevealWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+    }
+
+    /// Reveals the menu buttons now if they're still waiting. Returns false once they're already shown.
+    private func skipMenuButtonsWait() -> Bool {
+        guard menuButtonsRevealWork != nil else { return false }
+        cancelMenuButtonsReveal()
+        revealMenuButtons()
+        return true
     }
 
     private func cancelMenuButtonsReveal() {
