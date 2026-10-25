@@ -4,13 +4,15 @@ import UIKit
 class GameScene: SKScene {
     private static let driveTexture: SKTexture = {
         let texture = SKTexture(imageNamed: "roadster.white")
-        // Keeps pixel art crisp instead of blurred when scaled
-        texture.filteringMode = .nearest
+        texture.filteringMode = .linear
         return texture
     }()
     private static let driveSize: CGSize = {
         let pixels = driveTexture.size()
-        return CGSize(width: pixels.width * NPCCar.artScale, height: pixels.height * NPCCar.artScale)
+        // Keep the same on-screen height as the old 57px * artScale sprite.
+        let targetHeight: CGFloat = 57 * NPCCar.artScale
+        let scale = targetHeight / pixels.height
+        return CGSize(width: (pixels.width * scale).rounded(), height: targetHeight)
     }()
     private let player = SKSpriteNode(texture: GameScene.driveTexture, size: GameScene.driveSize)
 
