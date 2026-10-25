@@ -36,6 +36,10 @@ class GameScene: SKScene {
     private let laneCount = 4
     // 0 = left shoulder, 1...laneCount = asphalt, laneCount+1 = right shoulder
     private var currentLane = 2
+    /// Swipe distance that counts as a lane change or jump.
+    private let swipeThreshold: CGFloat = 40
+    private var swipeOrigin: CGPoint?
+    private var didConsumeSwipe = false
 
     private let asphaltColor = SKColor(white: 0.22, alpha: 1)
     private let shoulderColor = SKColor(red: 0.16, green: 0.14, blue: 0.10, alpha: 1)
@@ -965,13 +969,59 @@ class GameScene: SKScene {
         return button
     }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard isGameOver, let touch = touches.first else { return }
-        let tapped = nodes(at: touch.location(in: self))
-        if tapped.contains(where: { $0.name == retryButtonName }) {
-            onRetry?()
-        } else if tapped.contains(where: { $0.name == backButtonName }) {
-            onBackToMenu?()
+    private func resetSwipeTracking() {
+        swipeOrigin = nil
+        didConsumeSwipe = false
+    }
+
+    /// One action per swipe, as soon as the finger travels far enough.
+    /// Sideways changes lanes; up jumps. Scene Y increases toward the top of the screen.
+    private func handleSwipe(to location: CGPoint) {
+        guard !isGameOver, !didConsumeSwipe, let origin = swipeOrigin else { return }
+        let dx = location.x - origin.x
+        let dy = location.y - origin.y
+        guard max(abs(dx), abs(dy)) >= swipeThreshold else { return }
+
+        if abs(dx) > abs(dy) {
+            changeLane(by: dx > 0 ? 1 : -1)
+        } else if dy > 0 {
+            jump()
+        } else {
+            return
         }
+        didConsumeSwipe = true
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else { return }
+
+        if isGameOver {
+            let tapped = nodes(at: touch.location(in: self))
+            if tapped.contains(where: { $0.name == retryButtonName }) {
+                onRetry?()
+            } else if tapped.contains(where: { $0.name == backButtonName }) {
+                onBackToMenu?()
+            }
+            return
+        }
+
+        swipeOrigin = touch.location(in: self)
+        didConsumeSwipe = false
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else { return }
+        handleSwipe(to: touch.location(in: self))
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let touch = touches.first {
+            handleSwipe(to: touch.location(in: self))
+        }
+        resetSwipeTracking()
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        resetSwipeTracking()
     }
 }
