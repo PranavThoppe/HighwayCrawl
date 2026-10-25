@@ -483,6 +483,27 @@ private final class AchievementsPopupView: UIView, UIGestureRecognizerDelegate {
         titleLabel.textAlignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        let best = HighScoreStore.best
+        let bestIcon = UIImageView(image: UIImage(systemName: "trophy.fill"))
+        bestIcon.tintColor = UIColor(red: 0.96, green: 0.78, blue: 0.22, alpha: 1)
+        bestIcon.contentMode = .scaleAspectFit
+        bestIcon.translatesAutoresizingMaskIntoConstraints = false
+
+        let bestLabel = UILabel()
+        bestLabel.text = best > 0 ? "Best: \(HighScoreStore.formatted(best))" : "Best: —"
+        bestLabel.textColor = UIColor(red: 0.96, green: 0.78, blue: 0.22, alpha: 1)
+        bestLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+
+        let bestRow = UIStackView(arrangedSubviews: [bestIcon, bestLabel])
+        bestRow.axis = .horizontal
+        bestRow.alignment = .center
+        bestRow.spacing = 8
+        bestRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let bestContainer = UIView()
+        bestContainer.translatesAutoresizingMaskIntoConstraints = false
+        bestContainer.addSubview(bestRow)
+
         let listStack = UIStackView()
         listStack.axis = .vertical
         listStack.alignment = .fill
@@ -516,6 +537,7 @@ private final class AchievementsPopupView: UIView, UIGestureRecognizerDelegate {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
 
         card.addSubview(titleLabel)
+        card.addSubview(bestContainer)
         card.addSubview(scrollView)
         card.addSubview(closeButton)
 
@@ -530,7 +552,17 @@ private final class AchievementsPopupView: UIView, UIGestureRecognizerDelegate {
             titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
             titleLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
 
-            scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            bestIcon.widthAnchor.constraint(equalToConstant: 18),
+            bestIcon.heightAnchor.constraint(equalToConstant: 18),
+            bestRow.topAnchor.constraint(equalTo: bestContainer.topAnchor),
+            bestRow.bottomAnchor.constraint(equalTo: bestContainer.bottomAnchor),
+            bestRow.centerXAnchor.constraint(equalTo: bestContainer.centerXAnchor),
+
+            bestContainer.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            bestContainer.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+            bestContainer.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
+
+            scrollView.topAnchor.constraint(equalTo: bestContainer.bottomAnchor, constant: 12),
             scrollView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
             scrollView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
             scrollView.bottomAnchor.constraint(equalTo: closeButton.topAnchor, constant: -16),

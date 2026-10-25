@@ -97,6 +97,9 @@ class GameScene: SKScene {
     private var distanceScore: CGFloat = 0
     private var bonusScore = 0
     private var lastScoreCheck = -1
+    private var startingHighScore = 0
+    private var didAnnounceHighScore = false
+    private var isNewHighScore = false
     private var toastAnchor = CGPoint.zero
     private var nextAchievementToastSlot = 0
     private var activeAchievementToasts = 0
@@ -161,6 +164,7 @@ class GameScene: SKScene {
 
         setupCooldownBar(in: view)
         setupToastAnchor(in: view)
+        startingHighScore = HighScoreStore.best
         nextAmbulanceCheckScore = ambulanceUnlockScore
     }
 
@@ -179,6 +183,10 @@ class GameScene: SKScene {
         guard score != lastScoreCheck else { return }
         lastScoreCheck = score
         showAchievementToasts(AchievementStore.scored(score))
+        if !didAnnounceHighScore && startingHighScore > 0 && score > startingHighScore {
+            didAnnounceHighScore = true
+            showToast(title: "New High Score")
+        }
     }
 
     private func setupCooldownBar(in view: SKView) {
@@ -322,17 +330,21 @@ class GameScene: SKScene {
 
     private func showAchievementToasts(_ achievements: [Achievement]) {
         for achievement in achievements {
-            let slot = nextAchievementToastSlot
-            nextAchievementToastSlot += 1
-            activeAchievementToasts += 1
-            presentAchievementToast(achievement, slot: slot)
+            showToast(title: achievement.name)
         }
     }
 
-    /// Gold trophy + name, stacked in the top-right. Several can appear at once.
-    private func presentAchievementToast(_ achievement: Achievement, slot: Int) {
+    /// Gold trophy + title, stacked in the top-right. Several can appear at once.
+    private func showToast(title: String) {
+        let slot = nextAchievementToastSlot
+        nextAchievementToastSlot += 1
+        activeAchievementToasts += 1
+        presentToast(title: title, slot: slot)
+    }
+
+    private func presentToast(title: String, slot: Int) {
         let name = SKLabelNode(fontNamed: "AvenirNext-Bold")
-        name.text = achievement.name
+        name.text = title
         name.fontSize = 16
         name.fontColor = Self.achievementGold
         name.horizontalAlignmentMode = .right
@@ -882,6 +894,7 @@ class GameScene: SKScene {
         onJumpReadyChanged?(false)
         onGameOver?()
         GameHaptics.crash()
+        isNewHighScore = HighScoreStore.submit(totalScore)
         showAchievementToasts(AchievementStore.finishedRun())
     }
 
@@ -897,12 +910,13 @@ class GameScene: SKScene {
         let banner = SKSpriteNode(texture: bannerTexture)
 
         let scoreNode = SKLabelNode(fontNamed: "AvenirNext-Bold")
-        scoreNode.text = Self.formattedScore(totalScore)
+        scoreNode.text = HighScoreStore.formatted(totalScore)
         scoreNode.fontSize = 36
         scoreNode.fontColor = .white
         scoreNode.horizontalAlignmentMode = .center
         scoreNode.verticalAlignmentMode = .center
 
+        let highScoreCallout: SKLabelNode? = isNewHighScore ? makeNewHighScoreCallout() : nil
         let backButton = makeGameOverButton(systemName: "chevron.left", name: backButtonName)
         let retryButton = makeGameOverButton(systemName: "arrow.clockwise", name: retryButtonName)
 
@@ -911,8 +925,11 @@ class GameScene: SKScene {
         let scoreGap: CGFloat = 16
         let retryHeight = retryButton.size.height
         let scoreHeight = max(scoreNode.frame.height, 36)
+        let highScoreHeight: CGFloat = highScoreCallout.map { max($0.frame.height, 18) } ?? 0
+        let highScoreGap: CGFloat = isNewHighScore ? 10 : 0
+        let extraHighScore = highScoreHeight + highScoreGap
         let maxStackHeight = size.height * 0.72
-        let maxBannerHeight = max(40, maxStackHeight - retryHeight - gap - scoreHeight - scoreGap)
+        let maxBannerHeight = max(40, maxStackHeight - retryHeight - gap - scoreHeight - scoreGap - extraHighScore)
         let maxBannerWidth = size.width * 0.55
         let bannerScale = min(
             maxBannerWidth / max(banner.size.width, 1),
@@ -920,17 +937,28 @@ class GameScene: SKScene {
         )
         banner.setScale(bannerScale)
 
-        let stackHeight = banner.frame.height + gap + scoreHeight + scoreGap + retryHeight
+        let stackHeight = banner.frame.height + gap + scoreHeight + scoreGap + extraHighScore + retryHeight
         let stackTop = size.height / 2 + stackHeight / 2
         banner.position = CGPoint(x: size.width / 2, y: stackTop - banner.frame.height / 2)
         scoreNode.position = CGPoint(
             x: size.width / 2,
             y: banner.position.y - banner.frame.height / 2 - gap - scoreHeight / 2
         )
-        retryButton.position = CGPoint(
-            x: size.width / 2,
-            y: scoreNode.position.y - scoreHeight / 2 - scoreGap - retryHeight / 2
-        )
+        if let highScoreCallout {
+            highScoreCallout.position = CGPoint(
+                x: size.width / 2,
+                y: scoreNode.position.y - scoreHeight / 2 - highScoreGap - highScoreHeight / 2
+            )
+            retryButton.position = CGPoint(
+                x: size.width / 2,
+                y: highScoreCallout.position.y - highScoreHeight / 2 - scoreGap - retryHeight / 2
+            )
+        } else {
+            retryButton.position = CGPoint(
+                x: size.width / 2,
+                y: scoreNode.position.y - scoreHeight / 2 - scoreGap - retryHeight / 2
+            )
+        }
 
         let insets = view?.safeAreaInsets ?? .zero
         let backPaddingX = max(16, insets.left + 16)
@@ -942,26 +970,66 @@ class GameScene: SKScene {
 
         banner.zPosition = 50
         scoreNode.zPosition = 50
+        highScoreCallout?.zPosition = 50
         backButton.zPosition = 50
         retryButton.zPosition = 50
         banner.alpha = 0
         scoreNode.alpha = 0
+        highScoreCallout?.alpha = 0
         backButton.alpha = 0
         retryButton.alpha = 0
         addChild(banner)
         addChild(scoreNode)
+        if let highScoreCallout {
+            addChild(highScoreCallout)
+        }
         addChild(backButton)
         addChild(retryButton)
         banner.run(SKAction.fadeIn(withDuration: 0.25))
         scoreNode.run(SKAction.fadeIn(withDuration: 0.25))
+        highScoreCallout?.run(SKAction.fadeIn(withDuration: 0.25))
         backButton.run(SKAction.fadeIn(withDuration: 0.25))
         retryButton.run(SKAction.fadeIn(withDuration: 0.25))
+
+        if !isNewHighScore, HighScoreStore.best > 0 {
+            addChild(makeBestScoreBadge(insets: insets))
+        }
     }
 
-    private static func formattedScore(_ score: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: score)) ?? "\(score)"
+    private func makeNewHighScoreCallout() -> SKLabelNode {
+        let callout = SKLabelNode(fontNamed: "AvenirNext-Bold")
+        callout.text = "NEW HIGH SCORE!"
+        callout.fontSize = 18
+        callout.fontColor = Self.achievementGold
+        callout.horizontalAlignmentMode = .center
+        callout.verticalAlignmentMode = .center
+        return callout
+    }
+
+    /// Trophy + best score in the top-right, matching the achievement toast layout.
+    private func makeBestScoreBadge(insets: UIEdgeInsets) -> SKNode {
+        let label = SKLabelNode(fontNamed: "AvenirNext-Bold")
+        label.text = HighScoreStore.formatted(HighScoreStore.best)
+        label.fontSize = 16
+        label.fontColor = .white
+        label.horizontalAlignmentMode = .right
+        label.verticalAlignmentMode = .center
+
+        let badge = SKNode()
+        badge.addChild(label)
+
+        let icon = SKSpriteNode(texture: Self.trophyTexture)
+        icon.anchorPoint = CGPoint(x: 1, y: 0.5)
+        icon.position = CGPoint(x: -label.frame.width - 8, y: 0)
+        badge.addChild(icon)
+
+        let paddingX = max(16, insets.right + 16)
+        let paddingY = max(24, insets.top + 24)
+        badge.position = CGPoint(x: size.width - paddingX, y: size.height - paddingY)
+        badge.zPosition = 50
+        badge.alpha = 0
+        badge.run(SKAction.fadeIn(withDuration: 0.25))
+        return badge
     }
 
     /// Plain SF Symbol used as a game-over control.

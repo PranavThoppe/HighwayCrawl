@@ -117,3 +117,26 @@ enum AchievementStore {
         return AchievementCatalog.all.first { $0.id == id }
     }
 }
+
+enum HighScoreStore {
+    private static let key = "HighwayCrawl.highScore"
+    private static let defaults = UserDefaults.standard
+
+    static var best: Int { defaults.integer(forKey: key) }
+
+    /// Saves `max(best, score)`. Returns true only when an existing (non-zero) best was beaten.
+    @discardableResult
+    static func submit(_ score: Int) -> Bool {
+        let previous = best
+        if score > previous {
+            defaults.set(score, forKey: key)
+        }
+        return previous > 0 && score > previous
+    }
+
+    static func formatted(_ score: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: score)) ?? "\(score)"
+    }
+}
