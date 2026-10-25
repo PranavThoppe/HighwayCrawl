@@ -96,9 +96,20 @@ enum GameSounds {
     }()
     private static var nextBouncePlayer = 0
 
+    /// Trimmed to one siren burst, which covers the warning plus the ambulance's pass.
+    private static let sirenPlayer: AVAudioPlayer? = {
+        guard let url = Bundle.main.url(forResource: "siren", withExtension: "caf") else { return nil }
+        let player = try? AVAudioPlayer(contentsOf: url)
+        player?.volume = sirenVolume
+        player?.prepareToPlay()
+        return player
+    }()
+    private static let sirenVolume: Float = 0.35
+
     /// Loads the clips ahead of time so the first bounce doesn't stall.
     static func preload() {
         _ = bouncePlayers
+        _ = sirenPlayer
     }
 
     static func bounce() {
@@ -107,6 +118,22 @@ enum GameSounds {
         nextBouncePlayer = (nextBouncePlayer + 1) % bouncePlayers.count
         player.currentTime = 0
         player.play()
+    }
+
+    static func siren() {
+        guard GameSettings.soundEffectsEnabled, let player = sirenPlayer else { return }
+        player.volume = sirenVolume
+        player.currentTime = 0
+        player.play()
+    }
+
+    /// Fades out instead of cutting so a crash mid-siren doesn't click.
+    static func stopSiren() {
+        guard let player = sirenPlayer, player.isPlaying else { return }
+        player.setVolume(0, fadeDuration: 0.3)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if player.volume == 0 { player.stop() }
+        }
     }
 }
 

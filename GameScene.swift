@@ -626,6 +626,7 @@ class GameScene: SKScene {
         addChild(flash)
         laneFlash = flash
         GameHaptics.ambulanceWarning()
+        GameSounds.siren()
 
         if GameSettings.reduceFlashing {
             flash.alpha = 0.28
@@ -891,6 +892,7 @@ class GameScene: SKScene {
         cooldownBarFill.removeAction(forKey: "ready")
         ambulanceWarningRemaining = 0
         clearLaneFlash()
+        GameSounds.stopSiren()
         onJumpReadyChanged?(false)
         onGameOver?()
         GameHaptics.crash()
