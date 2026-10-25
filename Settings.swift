@@ -1,3 +1,4 @@
+import AVFoundation
 import UIKit
 
 /// Player preferences. Values persist in `UserDefaults` and are read live, so a menu
@@ -79,6 +80,33 @@ enum GameHaptics {
     /// Confirmation tap when the player turns haptics back on.
     static func preview() {
         light.impactOccurred()
+    }
+}
+
+enum GameSounds {
+    /// Roof bounces chain faster than the clip length, so a few players let them overlap.
+    private static let bouncePlayers: [AVAudioPlayer] = {
+        try? AVAudioSession.sharedInstance().setCategory(.ambient)
+        guard let url = Bundle.main.url(forResource: "bounce", withExtension: "caf") else { return [] }
+        return (0..<3).compactMap { _ in
+            let player = try? AVAudioPlayer(contentsOf: url)
+            player?.prepareToPlay()
+            return player
+        }
+    }()
+    private static var nextBouncePlayer = 0
+
+    /// Loads the clips ahead of time so the first bounce doesn't stall.
+    static func preload() {
+        _ = bouncePlayers
+    }
+
+    static func bounce() {
+        guard GameSettings.soundEffectsEnabled, !bouncePlayers.isEmpty else { return }
+        let player = bouncePlayers[nextBouncePlayer]
+        nextBouncePlayer = (nextBouncePlayer + 1) % bouncePlayers.count
+        player.currentTime = 0
+        player.play()
     }
 }
 

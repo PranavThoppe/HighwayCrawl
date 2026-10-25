@@ -135,6 +135,7 @@ class GameScene: SKScene {
     override func didMove(to view: SKView) {
         anchorPoint = .zero
         backgroundColor = asphaltColor
+        GameSounds.preload()
 
         for i in 0..<2 {
             let road = makeRoadTile()
@@ -316,6 +317,7 @@ class GameScene: SKScene {
         player.setScale(1)
         player.zPosition = playerAirZ
         GameHaptics.bounce()
+        GameSounds.bounce()
     }
 
     private func showAchievementToasts(_ achievements: [Achievement]) {
