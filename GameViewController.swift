@@ -33,6 +33,7 @@ class GameViewController: UIViewController {
         view.backgroundColor = .black
         setupGameView()
         setupControlButtons()
+        GameMusic.shared.start()
     }
 
     override func viewDidAppear(_ animated: Bool) {

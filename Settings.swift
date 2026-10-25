@@ -2,8 +2,7 @@ import AVFoundation
 import UIKit
 
 /// Player preferences. Values persist in `UserDefaults` and are read live, so a menu
-/// change is already in effect on the next run. Music and sound effects are stored
-/// now so audio can honor them once it exists.
+/// change is already in effect on the next run.
 enum GameSettings {
     private static let defaults = UserDefaults.standard
 
@@ -90,6 +89,7 @@ enum GameSounds {
         guard let url = Bundle.main.url(forResource: "bounce", withExtension: "caf") else { return [] }
         return (0..<3).compactMap { _ in
             let player = try? AVAudioPlayer(contentsOf: url)
+            player?.volume = 0.4
             player?.prepareToPlay()
             return player
         }
@@ -107,6 +107,61 @@ enum GameSounds {
         nextBouncePlayer = (nextBouncePlayer + 1) % bouncePlayers.count
         player.currentTime = 0
         player.play()
+    }
+}
+
+/// Background music. Plays the tracks in order and wraps back to the first,
+/// so Waves opens the app and the playlist then alternates.
+final class GameMusic: NSObject, AVAudioPlayerDelegate {
+    static let shared = GameMusic()
+
+    private let tracks = ["waves", "feel-the-earth-spinning"]
+    private var trackIndex = 0
+    private var player: AVAudioPlayer?
+
+    private override init() {
+        super.init()
+        try? AVAudioSession.sharedInstance().setCategory(.ambient)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    func start() {
+        guard GameSettings.musicEnabled else { return }
+        if player == nil { loadTrack(at: trackIndex) }
+        player?.play()
+    }
+
+    func stop() {
+        player?.pause()
+    }
+
+    func refresh() {
+        GameSettings.musicEnabled ? start() : stop()
+    }
+
+    private func loadTrack(at index: Int) {
+        trackIndex = index % tracks.count
+        guard let url = Bundle.main.url(forResource: tracks[trackIndex], withExtension: "mp3") else {
+            player = nil
+            return
+        }
+        player = try? AVAudioPlayer(contentsOf: url)
+        player?.delegate = self
+        player?.volume = 0.5
+        player?.prepareToPlay()
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        loadTrack(at: trackIndex + 1)
+        start()
+    }
+
+    /// Playback is suspended while the app is backgrounded.
+    @objc private func appDidBecomeActive() {
+        refresh()
     }
 }
 
@@ -228,6 +283,7 @@ final class SettingsPopupView: UIView, UIGestureRecognizerDelegate {
 
     @objc private func didToggleMusic(_ sender: UISwitch) {
         GameSettings.musicEnabled = sender.isOn
+        GameMusic.shared.refresh()
     }
 
     @objc private func didToggleSoundEffects(_ sender: UISwitch) {
