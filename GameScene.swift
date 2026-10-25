@@ -998,7 +998,7 @@ class GameScene: SKScene {
 
     private func makeNewHighScoreCallout() -> SKLabelNode {
         let callout = SKLabelNode(fontNamed: "AvenirNext-Bold")
-        callout.text = "NEW HIGH SCORE!"
+        callout.text = "NEW HIGH SCORE"
         callout.fontSize = 18
         callout.fontColor = Self.achievementGold
         callout.horizontalAlignmentMode = .center
