@@ -222,6 +222,7 @@ class GameScene: SKScene {
         cooldownBarFill.color = .orange
         cooldownBarFill.xScale = 0
         onJumpReadyChanged?(false)
+        GameHaptics.jump()
     }
 
     private func updateJump(dt: TimeInterval) {
@@ -314,6 +315,7 @@ class GameScene: SKScene {
         jumpBoost = jumpBoostSpeed
         player.setScale(1)
         player.zPosition = playerAirZ
+        GameHaptics.bounce()
     }
 
     private func showAchievementToasts(_ achievements: [Achievement]) {
@@ -406,6 +408,7 @@ class GameScene: SKScene {
     }
 
     private func flashCooldownBar() {
+        guard !GameSettings.reduceFlashing else { return }
         let flash = SKAction.sequence([
             SKAction.fadeAlpha(to: 0.2, duration: 0.08),
             SKAction.fadeAlpha(to: 1, duration: 0.08)
@@ -421,6 +424,7 @@ class GameScene: SKScene {
         currentLane = nextLane
         player.removeAction(forKey: "laneChange")
         player.run(SKAction.moveTo(x: xPosition(forLane: currentLane), duration: 0.18), withKey: "laneChange")
+        GameHaptics.laneChange()
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -605,15 +609,20 @@ class GameScene: SKScene {
         )
         flash.position = CGPoint(x: xPosition(forLane: ambulanceLane), y: size.height / 2)
         flash.zPosition = 2
-        flash.alpha = 0.5
         addChild(flash)
         laneFlash = flash
+        GameHaptics.ambulanceWarning()
 
-        let pulse = SKAction.repeatForever(SKAction.sequence([
-            SKAction.fadeAlpha(to: 0.18, duration: 0.1),
-            SKAction.fadeAlpha(to: 0.55, duration: 0.1)
-        ]))
-        flash.run(pulse, withKey: "pulse")
+        if GameSettings.reduceFlashing {
+            flash.alpha = 0.28
+        } else {
+            flash.alpha = 0.5
+            let pulse = SKAction.repeatForever(SKAction.sequence([
+                SKAction.fadeAlpha(to: 0.18, duration: 0.1),
+                SKAction.fadeAlpha(to: 0.55, duration: 0.1)
+            ]))
+            flash.run(pulse, withKey: "pulse")
+        }
     }
 
     private func spawnAmbulance() {
@@ -870,6 +879,7 @@ class GameScene: SKScene {
         clearLaneFlash()
         onJumpReadyChanged?(false)
         onGameOver?()
+        GameHaptics.crash()
         showAchievementToasts(AchievementStore.finishedRun())
     }
 

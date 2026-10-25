@@ -69,8 +69,8 @@ class GameViewController: UIViewController {
     private func setupGameView() {
         skView.translatesAutoresizingMaskIntoConstraints = false
         skView.ignoresSiblingOrder = true
-        skView.showsFPS = true
-        skView.showsNodeCount = true
+        skView.showsFPS = false
+        skView.showsNodeCount = false
         view.addSubview(skView)
 
         menuVideoView.translatesAutoresizingMaskIntoConstraints = false
@@ -172,8 +172,9 @@ class GameViewController: UIViewController {
     }
 
     private func setControlsHidden(_ hidden: Bool) {
-        laneStack.isHidden = hidden
-        actionButton.isHidden = hidden
+        let hideButtons = hidden || !GameSettings.showOnScreenButtons
+        laneStack.isHidden = hideButtons
+        actionButton.isHidden = hideButtons
     }
 
     private func setupMenuButtons() {
@@ -311,10 +312,7 @@ class GameViewController: UIViewController {
     }
 
     @objc private func didTapSettings() {
-        let popup = MenuPopupView(
-            title: "Settings",
-            message: "Audio, controls, and other options will live here."
-        )
+        let popup = SettingsPopupView()
         popup.onDismiss = { [weak self] in
             self?.dismissMenuPopup()
         }
@@ -439,97 +437,6 @@ class GameViewController: UIViewController {
     /// Dims the action button while the jump is on cooldown.
     private func setJumpReady(_ ready: Bool) {
         actionButton.alpha = ready ? 1 : 0.35
-    }
-}
-
-/// Dimmed menu overlay. Taps on the backdrop or close button dismiss it so the game does not start.
-private final class MenuPopupView: UIView, UIGestureRecognizerDelegate {
-
-    var onDismiss: (() -> Void)?
-
-    private let card = UIView()
-
-    init(title: String, message: String) {
-        super.init(frame: .zero)
-        backgroundColor = UIColor.black.withAlphaComponent(0.5)
-        isUserInteractionEnabled = true
-
-        let backdropTap = UITapGestureRecognizer(target: self, action: #selector(didTapBackdrop))
-        backdropTap.delegate = self
-        addGestureRecognizer(backdropTap)
-
-        card.backgroundColor = UIColor(white: 0.1, alpha: 0.96)
-        card.layer.cornerRadius = 16
-        card.layer.borderWidth = 2
-        card.layer.borderColor = UIColor.white.cgColor
-        card.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(card)
-
-        let titleLabel = UILabel()
-        titleLabel.text = title
-        titleLabel.textColor = .white
-        titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
-        titleLabel.textAlignment = .center
-
-        let messageLabel = UILabel()
-        messageLabel.text = message
-        messageLabel.textColor = UIColor(white: 0.85, alpha: 1)
-        messageLabel.font = .systemFont(ofSize: 16, weight: .regular)
-        messageLabel.textAlignment = .center
-        messageLabel.numberOfLines = 0
-
-        var closeConfig = UIButton.Configuration.plain()
-        closeConfig.title = "Close"
-        closeConfig.baseForegroundColor = .white
-        closeConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = .systemFont(ofSize: 16, weight: .semibold)
-            outgoing.foregroundColor = .white
-            return outgoing
-        }
-        let closeButton = UIButton(type: .system)
-        closeButton.configuration = closeConfig
-        closeButton.layer.borderWidth = 2
-        closeButton.layer.borderColor = UIColor.white.cgColor
-        closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
-
-        let stack = UIStackView(arrangedSubviews: [titleLabel, messageLabel, closeButton])
-        stack.axis = .vertical
-        stack.alignment = .fill
-        stack.spacing = 16
-        stack.setCustomSpacing(24, after: messageLabel)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            card.centerXAnchor.constraint(equalTo: centerXAnchor),
-            card.centerYAnchor.constraint(equalTo: centerYAnchor),
-            card.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.5),
-            card.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -48),
-
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
-
-            closeButton.heightAnchor.constraint(equalToConstant: 44)
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        !card.frame.contains(touch.location(in: self))
-    }
-
-    @objc private func didTapBackdrop() {
-        onDismiss?()
-    }
-
-    @objc private func didTapClose() {
-        onDismiss?()
     }
 }
 
