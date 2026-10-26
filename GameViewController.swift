@@ -11,6 +11,11 @@ import GameplayKit
 
 class GameViewController: UIViewController {
 
+    /// Landscape canvas of a 6.3" iPhone (iPhone 16 Pro and later). Gameplay is
+    /// authored for this size; other devices letterbox and scale it uniformly.
+    private static let designSize = CGSize(width: 874, height: 402)
+    private static let designAspect = designSize.width / designSize.height
+
     private let skView = SKView()
     private let menuVideoView = LoopingVideoView()
     private let menuLogoView = UIImageView(image: UIImage(named: "menu.logo"))
@@ -69,6 +74,7 @@ class GameViewController: UIViewController {
 
     private func setupGameView() {
         skView.translatesAutoresizingMaskIntoConstraints = false
+        skView.backgroundColor = .black
         skView.ignoresSiblingOrder = true
         skView.showsFPS = false
         skView.showsNodeCount = false
@@ -87,16 +93,24 @@ class GameViewController: UIViewController {
 
         let logoAspect = menuLogoView.image.map { $0.size.height / $0.size.width } ?? 0.45
 
+        let fillWidth = skView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        fillWidth.priority = .defaultHigh
+        let fillHeight = skView.heightAnchor.constraint(equalTo: view.heightAnchor)
+        fillHeight.priority = .defaultHigh
+
         NSLayoutConstraint.activate([
             menuLogoView.topAnchor.constraint(equalTo: menuVideoView.safeAreaLayoutGuide.topAnchor, constant: 16),
             menuLogoView.trailingAnchor.constraint(equalTo: menuVideoView.trailingAnchor, constant: -12),
             menuLogoView.widthAnchor.constraint(equalTo: menuVideoView.widthAnchor, multiplier: 0.42),
             menuLogoView.heightAnchor.constraint(equalTo: menuLogoView.widthAnchor, multiplier: logoAspect),
 
-            skView.topAnchor.constraint(equalTo: view.topAnchor),
-            skView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            skView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            skView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            skView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            skView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            skView.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor),
+            skView.heightAnchor.constraint(lessThanOrEqualTo: view.heightAnchor),
+            skView.widthAnchor.constraint(equalTo: skView.heightAnchor, multiplier: Self.designAspect),
+            fillWidth,
+            fillHeight,
 
             menuVideoView.topAnchor.constraint(equalTo: view.topAnchor),
             menuVideoView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -107,19 +121,17 @@ class GameViewController: UIViewController {
 
     private func presentGameSceneIfNeeded() {
         guard !hasPresentedScene else { return }
-        let size = skView.bounds.size
-        guard size.width > 0, size.height > 0 else { return }
+        guard skView.bounds.width > 0, skView.bounds.height > 0 else { return }
 
         hasPresentedScene = true
-        showMenu(size: size)
+        showMenu()
     }
 
-    private func showMenu(size: CGSize) {
-        let menu = MenuScene(size: size)
-        menu.scaleMode = .resizeFill
+    private func showMenu() {
+        let menu = MenuScene(size: Self.designSize)
+        menu.scaleMode = .aspectFit
         menu.onPlay = { [weak self] in
-            guard let self else { return }
-            self.startNewGame(size: self.skView.bounds.size)
+            self?.startNewGame()
         }
         menu.onTap = { [weak self] in
             self?.skipMenuButtonsWait() ?? false
@@ -149,19 +161,17 @@ class GameViewController: UIViewController {
         })
     }
 
-    private func startNewGame(size: CGSize) {
+    private func startNewGame() {
         cancelMenuButtonsReveal()
         dismissMenuPopup()
         dismissMenuVideo()
-        let scene = GameScene(size: size)
-        scene.scaleMode = .resizeFill
+        let scene = GameScene(size: Self.designSize)
+        scene.scaleMode = .aspectFit
         scene.onRetry = { [weak self] in
-            guard let self else { return }
-            self.startNewGame(size: self.skView.bounds.size)
+            self?.startNewGame()
         }
         scene.onBackToMenu = { [weak self] in
-            guard let self else { return }
-            self.showMenu(size: self.skView.bounds.size)
+            self?.showMenu()
         }
         scene.onGameOver = { [weak self] in
             self?.setControlsHidden(true)
@@ -313,7 +323,7 @@ class GameViewController: UIViewController {
     }
 
     @objc private func didTapPlay() {
-        startNewGame(size: skView.bounds.size)
+        startNewGame()
     }
 
     @objc private func didTapAchievements() {
@@ -387,13 +397,13 @@ class GameViewController: UIViewController {
             laneRightButton.widthAnchor.constraint(equalToConstant: buttonSize),
             laneRightButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
-            laneStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            laneStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            laneStack.leadingAnchor.constraint(equalTo: skView.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            laneStack.bottomAnchor.constraint(equalTo: skView.safeAreaLayoutGuide.bottomAnchor, constant: -16),
 
             actionButton.widthAnchor.constraint(equalToConstant: buttonSize),
             actionButton.heightAnchor.constraint(equalToConstant: buttonSize),
-            actionButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            actionButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
+            actionButton.trailingAnchor.constraint(equalTo: skView.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            actionButton.bottomAnchor.constraint(equalTo: skView.safeAreaLayoutGuide.bottomAnchor, constant: -16)
         ])
     }
 

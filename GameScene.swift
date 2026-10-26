@@ -168,8 +168,23 @@ class GameScene: SKScene {
         nextAmbulanceCheckScore = ambulanceUnlockScore
     }
 
-    private func setupToastAnchor(in view: SKView) {
+    /// View safe-area insets converted into scene points so HUD stays put when the
+    /// 6.3" canvas is scaled on a larger or smaller screen.
+    private func sceneSafeAreaInsets(from view: SKView?) -> UIEdgeInsets {
+        guard let view, view.bounds.width > 0, view.bounds.height > 0 else { return .zero }
         let insets = view.safeAreaInsets
+        let scaleX = size.width / view.bounds.width
+        let scaleY = size.height / view.bounds.height
+        return UIEdgeInsets(
+            top: insets.top * scaleY,
+            left: insets.left * scaleX,
+            bottom: insets.bottom * scaleY,
+            right: insets.right * scaleX
+        )
+    }
+
+    private func setupToastAnchor(in view: SKView) {
+        let insets = sceneSafeAreaInsets(from: view)
         toastAnchor = CGPoint(
             x: size.width - max(16, insets.right + 16),
             y: size.height - max(24, insets.top + 24)
@@ -190,7 +205,7 @@ class GameScene: SKScene {
     }
 
     private func setupCooldownBar(in view: SKView) {
-        let insets = view.safeAreaInsets
+        let insets = sceneSafeAreaInsets(from: view)
         let origin = CGPoint(
             x: max(16, insets.left + 16),
             y: size.height - max(24, insets.top + 24)
@@ -962,7 +977,7 @@ class GameScene: SKScene {
             )
         }
 
-        let insets = view?.safeAreaInsets ?? .zero
+        let insets = sceneSafeAreaInsets(from: view)
         let backPaddingX = max(16, insets.left + 16)
         let backPaddingY = max(24, insets.top + 24)
         backButton.position = CGPoint(
